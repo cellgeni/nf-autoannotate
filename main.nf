@@ -25,6 +25,9 @@ if( !params.ref_label_col ) {
 if( !params.batch_key ) {
     error "Missing required parameter: --batch_key"
 }
+if( (params.ref_timepoint_col && !params.ref_timepoints) || (!params.ref_timepoint_col && params.ref_timepoints) ) {
+    error "Use --ref_timepoint_col and --ref_timepoints together when filtering the reference by timepoint"
+}
 if( !['standard', 'detailed'].contains(params.celltypist_training_mode) ) {
     error "Invalid --celltypist_training_mode '${params.celltypist_training_mode}'. Expected one of: standard, detailed"
 }
@@ -61,6 +64,8 @@ process VALIDATE_INPUTS {
         --query-h5ad ${query_h5ad} \
         --ref-label-col '${params.ref_label_col}' \
         --batch-key '${params.batch_key}' \
+        ${params.ref_timepoint_col ? "--ref-timepoint-col '${params.ref_timepoint_col}'" : ''} \
+        ${params.ref_timepoints ? "--ref-timepoints '${params.ref_timepoints}'" : ''} \
         --output validation_manifest.json
     """
 }

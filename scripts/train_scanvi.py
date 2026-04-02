@@ -22,6 +22,18 @@ def parse_args():
     return parser.parse_args()
 
 
+def apply_reference_timepoint_filter(adata: ad.AnnData, manifest: dict) -> ad.AnnData:
+    timepoint_col = manifest.get("ref_timepoint_col")
+    timepoints = manifest.get("ref_timepoints") or []
+    if not timepoint_col or not timepoints:
+        return adata
+    mask = adata.obs[timepoint_col].astype(str).isin(timepoints)
+    filtered = adata[mask].copy()
+    if filtered.n_obs == 0:
+        raise ValueError("Reference timepoint filtering removed all cells before scANVI training")
+    return filtered
+
+
 def main():
     args = parse_args()
 
@@ -32,6 +44,7 @@ def main():
     query = ad.read_h5ad(args.query_h5ad)
     ref.var_names_make_unique()
     query.var_names_make_unique()
+    ref = apply_reference_timepoint_filter(ref, manifest)
 
     if args.scvi_model_dir:
         ref.obs["_scanvi_label"] = ref.obs[args.ref_label_col].astype(str)
@@ -82,6 +95,8 @@ def main():
         "ref_label_col": args.ref_label_col,
         "batch_key": args.batch_key,
         "unknown_label": args.unknown_label,
+        "ref_timepoint_col": manifest.get("ref_timepoint_col"),
+        "ref_timepoints": manifest.get("ref_timepoints", []),
         "scvi_model_dir": args.scvi_model_dir,
         "inference_mode": inference_mode,
         "genes": genes,

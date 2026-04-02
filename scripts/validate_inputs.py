@@ -14,6 +14,8 @@ def parse_args():
     parser.add_argument("--query-h5ad", required=True)
     parser.add_argument("--ref-label-col", required=True)
     parser.add_argument("--batch-key", required=True)
+    parser.add_argument("--ref-timepoint-col")
+    parser.add_argument("--ref-timepoints")
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -42,6 +44,16 @@ def infer_gene_id_type(var_names) -> str:
     return "symbol"
 
 
+def parse_timepoints(raw_timepoints: str | None) -> list[str]:
+    if not raw_timepoints:
+        return []
+    values = [value.strip() for value in raw_timepoints.split(",")]
+    values = [value for value in values if value]
+    if not values:
+        raise ValueError("No valid reference timepoints were provided")
+    return values
+
+
 def main():
     args = parse_args()
 
@@ -61,6 +73,23 @@ def main():
     require_obs_column(query, args.batch_key, "query h5ad")
     require_unique_index(ref, "Reference")
     require_unique_index(query, "Query")
+
+    selected_timepoints = parse_timepoints(args.ref_timepoints)
+    filtered_ref_cell_count = int(ref.n_obs)
+    if args.ref_timepoint_col or selected_timepoints:
+        if not args.ref_timepoint_col or not selected_timepoints:
+            raise ValueError("Both --ref-timepoint-col and --ref-timepoints are required together")
+        require_obs_column(ref, args.ref_timepoint_col, "reference h5ad")
+        available_timepoints = sorted({str(value) for value in ref.obs[args.ref_timepoint_col].astype(str)})
+        missing_timepoints = sorted(set(selected_timepoints) - set(available_timepoints))
+        if missing_timepoints:
+            raise ValueError(
+                "Requested reference timepoint values were not found in "
+                f"'{args.ref_timepoint_col}': {', '.join(missing_timepoints)}"
+            )
+        filtered_ref_cell_count = int(ref.obs[args.ref_timepoint_col].astype(str).isin(selected_timepoints).sum())
+        if filtered_ref_cell_count == 0:
+            raise ValueError("Reference timepoint filtering removed all cells")
 
     ref.var_names_make_unique()
     query.var_names_make_unique()
@@ -84,10 +113,13 @@ def main():
         "query_h5ad": str(query_path.resolve()),
         "ref_label_col": args.ref_label_col,
         "batch_key": args.batch_key,
+        "ref_timepoint_col": args.ref_timepoint_col,
+        "ref_timepoints": selected_timepoints,
         "gene_id_type": ref_gene_id_type,
         "shared_gene_count": len(shared_genes),
         "shared_genes": shared_genes,
         "ref_cell_count": int(ref.n_obs),
+        "filtered_ref_cell_count": filtered_ref_cell_count,
         "query_cell_count": int(query.n_obs),
     }
 

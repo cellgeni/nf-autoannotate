@@ -59,6 +59,12 @@ The workflow is implemented in [`main.nf`](/lustre/scratch127/cellgen/cellgeni/b
   Column in `ref_h5ad.obs` containing reference cell type labels.
 - `--batch_key`
   Column present in both `ref_h5ad.obs` and `query_h5ad.obs` used for scVI/scANVI setup.
+- `--ref_timepoint_col`
+  Optional reference `obs` column containing timepoint information used to restrict the reference before training.
+  Must be used together with `--ref_timepoints`.
+- `--ref_timepoints`
+  Optional comma-separated list of reference timepoint values to keep for training, for example `E12,E14`.
+  Must be used together with `--ref_timepoint_col`.
 
 ### Optional Parameters
 
@@ -116,6 +122,8 @@ Before any model runs, the pipeline validates that:
 - `query_h5ad` exists
 - `ref_label_col` exists in `ref_h5ad.obs`
 - `batch_key` exists in both `ref_h5ad.obs` and `query_h5ad.obs`
+- if timepoint filtering is requested, `ref_timepoint_col` exists in `ref_h5ad.obs`
+- if timepoint filtering is requested, all requested `ref_timepoints` exist in the reference
 - cell indices are unique in both objects
 - the reference and query share at least one gene
 
@@ -124,6 +132,7 @@ If validation passes, the pipeline writes a `validation_manifest.json` file. Thi
 - the resolved input file paths
 - `ref_label_col`
 - `batch_key`
+- the optional reference timepoint filter column and selected timepoints
 - the shared gene list
 - reference and query cell counts
 
@@ -145,11 +154,13 @@ If `--celltypist_model` is supplied, or `--celltypist_mode pretrained` is set, t
 
 If CellTypist is trained in `standard` mode, the training logic:
 
+- optionally filters the reference to the requested timepoint subset
 - subsets the reference to the validated shared genes
 - trains the final model directly on that dataset
 
 If CellTypist is trained in `detailed` mode, the training logic:
 
+- optionally filters the reference to the requested timepoint subset
 - subsets the reference to the validated shared genes
 - downsamples each label to at most `--celltypist_balance_cells_per_label` cells
 - optionally trains a quick SGD model to rank informative genes
@@ -176,6 +187,7 @@ If `--scanvi_model_dir` is supplied, or `--scanvi_mode pretrained` is set, the p
 
 If `--scvi_reference_model_dir` is supplied while `scanvi_mode` remains `train`, the pipeline:
 
+- optionally filters the reference to the requested timepoint subset before scANVI training
 - loads the pretrained scVI reference model
 - initializes a reference scANVI model from it
 - trains scANVI on the labeled reference only
