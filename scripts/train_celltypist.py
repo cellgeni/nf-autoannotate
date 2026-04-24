@@ -3,7 +3,7 @@
 import argparse
 import json
 
-import anndata as ad
+import scanpy as sc
 import celltypist
 import numpy as np
 
@@ -25,7 +25,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def balanced_training_subset(adata: ad.AnnData, label_col: str, cells_per_label: int) -> tuple[ad.AnnData, int]:
+def balanced_training_subset(adata: sc.AnnData, label_col: str, cells_per_label: int) -> tuple[sc.AnnData, int]:
     if cells_per_label <= 0:
         return adata, adata.n_obs
 
@@ -41,12 +41,12 @@ def balanced_training_subset(adata: ad.AnnData, label_col: str, cells_per_label:
 
 
 def select_features(
-    adata: ad.AnnData,
+    adata: sc.AnnData,
     label_col: str,
     n_jobs: int,
     top_genes: int,
     max_iter: int,
-) -> tuple[ad.AnnData, list[str]]:
+) -> tuple[sc.AnnData, list[str]]:
     top_genes = max(1, min(top_genes, adata.n_vars))
 
     rough_model = celltypist.train(
@@ -67,7 +67,7 @@ def select_features(
     return adata[:, selected_genes].copy(), selected_genes
 
 
-def apply_reference_timepoint_filter(adata: ad.AnnData, manifest: dict) -> ad.AnnData:
+def apply_reference_timepoint_filter(adata: sc.AnnData, manifest: dict) -> sc.AnnData:
     timepoint_col = manifest.get("ref_timepoint_col")
     timepoints = manifest.get("ref_timepoints") or []
     if not timepoint_col or not timepoints:
@@ -85,8 +85,10 @@ def main():
     with open(args.validation_manifest, "r", encoding="utf-8") as handle:
         manifest = json.load(handle)
 
-    ref = ad.read_h5ad(args.ref_h5ad)
+    ref = sc.read_h5ad(args.ref_h5ad)
     ref.var_names_make_unique()
+    sc.pp.normalize_total(ref, target_sum=1e4)
+    sc.pp.log1p(ref)
     ref = apply_reference_timepoint_filter(ref, manifest)
     shared_genes = manifest["shared_genes"]
     ref = ref[:, shared_genes].copy()

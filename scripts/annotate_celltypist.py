@@ -3,7 +3,7 @@
 import argparse
 import json
 
-import anndata as ad
+import scanpy as sc
 import celltypist
 import pandas as pd
 from scipy import sparse
@@ -18,7 +18,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def align_adata_to_gene_list(adata: ad.AnnData, genes: list[str]) -> ad.AnnData:
+def align_adata_to_gene_list(adata: sc.AnnData, genes: list[str]) -> sc.AnnData:
     gene_to_index = {gene: idx for idx, gene in enumerate(adata.var_names)}
     matrix = adata.X.tocsr() if sparse.issparse(adata.X) else sparse.csr_matrix(adata.X)
     aligned_blocks = []
@@ -30,7 +30,7 @@ def align_adata_to_gene_list(adata: ad.AnnData, genes: list[str]) -> ad.AnnData:
             aligned_blocks.append(sparse.csr_matrix((adata.n_obs, 1), dtype=matrix.dtype))
 
     aligned_matrix = sparse.hstack(aligned_blocks, format="csr")
-    return ad.AnnData(X=aligned_matrix, obs=adata.obs.copy(), var=pd.DataFrame(index=genes))
+    return sc.AnnData(X=aligned_matrix, obs=adata.obs.copy(), var=pd.DataFrame(index=genes))
 
 
 def confidence_for_labels(probability_matrix: pd.DataFrame, labels: pd.Series) -> pd.Series:
@@ -50,8 +50,10 @@ def main():
     with open(args.validation_manifest, "r", encoding="utf-8") as handle:
         manifest = json.load(handle)
 
-    query = ad.read_h5ad(args.query_h5ad)
+    query = sc.read_h5ad(args.query_h5ad)
     query.var_names_make_unique()
+    sc.pp.normalize_total(query, target_sum=1e4)
+    sc.pp.log1p(query)
 
     model = celltypist.models.Model.load(args.model_path)
     model_genes = list(model.classifier.features)
