@@ -55,6 +55,9 @@ The workflow is implemented in [`main.nf`](/lustre/scratch127/cellgen/cellgeni/b
   Path to the query AnnData file that will receive annotations.
 - `--project_tag`
   Used in report paths and in the final output filename.
+- `--outdir`
+  Directory where final published outputs are copied.
+  Default: `autoannotate-results-<project_tag>`
 - `--ref_label_col`
   Column in `ref_h5ad.obs` containing reference cell type labels.
 - `--batch_key`
@@ -87,6 +90,11 @@ The workflow is implemented in [`main.nf`](/lustre/scratch127/cellgen/cellgeni/b
 - `--scanvi_score_col`
   Output column name for scANVI confidence.
   Default: `scanvi_confidence`
+- `--query_cluster_col`
+  Query `obs` column used for cluster-level annotation comparison during merge.
+  If the column is absent, the merge step computes Leiden clusters with this
+  column name.
+  Default: `leiden`
 - `--scanvi_query_max_epochs`
   Max epochs for scANVI query mapping when using a pretrained scVI reference model.
   Default: `100`
@@ -133,10 +141,10 @@ If validation passes, the pipeline writes a `validation_manifest.json` file. Thi
 - `ref_label_col`
 - `batch_key`
 - the optional reference timepoint filter column and selected timepoints
-- the shared gene list
+- the shared gene count
 - reference and query cell counts
 
-This manifest is passed to downstream steps so they all use the same validated feature intersection and metadata assumptions.
+The full validated feature intersection is written separately as `shared_genes.txt` and passed to downstream steps that need a consistent gene order.
 
 ## Execution Modes
 
@@ -201,9 +209,15 @@ The two methods are independent. One can be trained while the other uses a pretr
 
 ### Final Output
 
-The final annotated file is written as:
+The merge step publishes final outputs with `publishDir` into:
+
+- `--outdir` if provided
+- otherwise `autoannotate-results-<project_tag>`
+
+Published files:
 
 - `<project_tag>.annotated.h5ad`
+- `<project_tag>.cluster_annotation_summary.csv`
 
 This file is the original query AnnData with additional columns in `obs`:
 
@@ -212,6 +226,9 @@ This file is the original query AnnData with additional columns in `obs`:
 - CellTypist confidence column
 - scANVI label column
 - scANVI confidence column
+- `celltypist_scanvi_agree`
+- `celltypist_scanvi_cluster_modal_match`
+- `celltypist_scanvi_cluster_agreement_fraction`
 
 By default those are:
 
@@ -221,11 +238,20 @@ By default those are:
 - `scanvi_label`
 - `scanvi_confidence`
 
+This summary is grouped by `--query_cluster_col` and includes:
+
+- cluster size
+- top CellTypist majority-voting label and its fraction
+- top scANVI label and its fraction
+- whether the cluster modal labels match
+- per-cluster fraction of cells where CellTypist and scANVI agree
+
 ### Intermediate Outputs
 
 The workflow also produces intermediates in task work directories, including:
 
 - `validation_manifest.json`
+- `shared_genes.txt`
 - `celltypist_model.pkl`
 - `celltypist_model_metadata.json`
 - `celltypist_predictions.csv`

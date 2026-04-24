@@ -13,6 +13,7 @@ def parse_args():
     parser.add_argument("--ref-h5ad", required=True)
     parser.add_argument("--query-h5ad", required=True)
     parser.add_argument("--validation-manifest", required=True)
+    parser.add_argument("--shared-genes", required=True)
     parser.add_argument("--ref-label-col", required=True)
     parser.add_argument("--batch-key", required=True)
     parser.add_argument("--unknown-label", required=True)
@@ -32,6 +33,11 @@ def apply_reference_timepoint_filter(adata: ad.AnnData, manifest: dict) -> ad.An
     if filtered.n_obs == 0:
         raise ValueError("Reference timepoint filtering removed all cells before scANVI training")
     return filtered
+
+
+def read_gene_list(path: str) -> list[str]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip()]
 
 
 def main():
@@ -59,7 +65,7 @@ def main():
         genes = ref.var_names.tolist()
         inference_mode = "query_mapping"
     else:
-        shared_genes = manifest["shared_genes"]
+        shared_genes = read_gene_list(args.shared_genes)
         ref = ref[:, shared_genes].copy()
         query = query[:, shared_genes].copy()
 

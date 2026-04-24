@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
-
 import scanpy as sc
 import celltypist
 import pandas as pd
@@ -12,7 +10,7 @@ from scipy import sparse
 def parse_args():
     parser = argparse.ArgumentParser(description="Annotate query cells using a CellTypist model.")
     parser.add_argument("--query-h5ad", required=True)
-    parser.add_argument("--validation-manifest", required=True)
+    parser.add_argument("--shared-genes", required=True)
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--output", required=True)
     return parser.parse_args()
@@ -44,11 +42,13 @@ def confidence_for_labels(probability_matrix: pd.DataFrame, labels: pd.Series) -
     return pd.Series(scores, index=probability_matrix.index, dtype=float)
 
 
+def read_gene_list(path: str) -> list[str]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip()]
+
+
 def main():
     args = parse_args()
-
-    with open(args.validation_manifest, "r", encoding="utf-8") as handle:
-        manifest = json.load(handle)
 
     query = sc.read_h5ad(args.query_h5ad)
     query.var_names_make_unique()
@@ -57,7 +57,7 @@ def main():
 
     model = celltypist.models.Model.load(args.model_path)
     model_genes = list(model.classifier.features)
-    shared_set = set(manifest["shared_genes"])
+    shared_set = set(read_gene_list(args.shared_genes))
     if not any(gene in shared_set for gene in model_genes):
         raise ValueError("No genes overlap between query input and CellTypist model features")
 

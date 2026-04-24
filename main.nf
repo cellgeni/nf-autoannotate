@@ -15,6 +15,7 @@ if( !scanviMode ) {
 def refH5ad = file(params.ref_h5ad, checkIfExists: true)
 def queryH5ad = file(params.query_h5ad, checkIfExists: true)
 def scviReferenceModelDir = params.scvi_reference_model_dir ? file(params.scvi_reference_model_dir, checkIfExists: true) : null
+def outputDir = params.outdir?.toString()?.trim() ?: "autoannotate-results-${params.project_tag}"
 
 if( !params.project_tag ) {
     error "Missing required parameter: --project_tag"
@@ -48,7 +49,7 @@ if( scanviMode == 'pretrained' && params.scvi_reference_model_dir ) {
 }
 
 process VALIDATE_INPUTS {
-    label 'normal'
+    label 'validation'
 
     input:
     path ref_h5ad
@@ -56,6 +57,7 @@ process VALIDATE_INPUTS {
 
     output:
     path 'validation_manifest.json', emit: manifest
+    path 'shared_genes.txt', emit: shared_genes
 
     script:
     """
@@ -66,7 +68,8 @@ process VALIDATE_INPUTS {
         --batch-key '${params.batch_key}' \
         ${params.ref_timepoint_col ? "--ref-timepoint-col '${params.ref_timepoint_col}'" : ''} \
         ${params.ref_timepoints ? "--ref-timepoints '${params.ref_timepoints}'" : ''} \
-        --output validation_manifest.json
+        --output validation_manifest.json \
+        --shared-genes-output shared_genes.txt
     """
 }
 
@@ -76,6 +79,7 @@ process CELLTYPIST_TRAIN_MODEL {
     input:
     path ref_h5ad
     path validation_manifest
+    path shared_genes
 
     output:
     path 'celltypist_model.pkl', emit: model
@@ -86,6 +90,7 @@ process CELLTYPIST_TRAIN_MODEL {
     python3 ${projectDir}/scripts/train_celltypist.py \
         --ref-h5ad ${ref_h5ad} \
         --validation-manifest ${validation_manifest} \
+        --shared-genes ${shared_genes} \
         --ref-label-col '${params.ref_label_col}' \
         --output-model celltypist_model.pkl \
         --output-metadata celltypist_model_metadata.json \
@@ -99,27 +104,12 @@ process CELLTYPIST_TRAIN_MODEL {
     """
 }
 
-process CELLTYPIST_STAGE_PRETRAINED_MODEL {
+process CELLTYPIST_ANNOTATE {
     label 'normal'
 
     input:
-    path celltypist_model
-
-    output:
-    path 'celltypist_model.pkl', emit: model
-
-    script:
-    """
-    cp ${celltypist_model} celltypist_model.pkl
-    """
-}
-
-process CELLTYPIST_ANNOTATE {
-    label 'normal4core'
-
-    input:
     path query_h5ad
-    path validation_manifest
+    path shared_genes
     path celltypist_model
 
     output:
@@ -129,19 +119,20 @@ process CELLTYPIST_ANNOTATE {
     """
     python3 ${projectDir}/scripts/annotate_celltypist.py \
         --query-h5ad ${query_h5ad} \
-        --validation-manifest ${validation_manifest} \
+        --shared-genes ${shared_genes} \
         --model-path ${celltypist_model} \
         --output celltypist_predictions.csv
     """
 }
 
 process SCANVI_TRAIN_MODEL {
-    label 'normalgpu'
+    label 'normalgpu64'
 
     input:
     path ref_h5ad
     path query_h5ad
     path validation_manifest
+    path shared_genes
 
     output:
     path 'scanvi_model', emit: model_dir
@@ -153,6 +144,7 @@ process SCANVI_TRAIN_MODEL {
         --ref-h5ad ${ref_h5ad} \
         --query-h5ad ${query_h5ad} \
         --validation-manifest ${validation_manifest} \
+        --shared-genes ${shared_genes} \
         --ref-label-col '${params.ref_label_col}' \
         --batch-key '${params.batch_key}' \
         --unknown-label '${params.unknown_label}' \
@@ -162,27 +154,12 @@ process SCANVI_TRAIN_MODEL {
     """
 }
 
-process SCANVI_STAGE_PRETRAINED_MODEL {
-    label 'normal'
-
-    input:
-    path scanvi_model_dir
-
-    output:
-    path 'scanvi_model', emit: model_dir
-
-    script:
-    """
-    cp -r ${scanvi_model_dir} scanvi_model
-    """
-}
-
 process SCANVI_ANNOTATE {
-    label 'normalgpu'
+    label 'normalgpu128'
 
     input:
     path query_h5ad
-    path validation_manifest
+    path shared_genes
     path scanvi_model_dir
 
     output:
@@ -192,7 +169,7 @@ process SCANVI_ANNOTATE {
     """
     python3 ${projectDir}/scripts/annotate_scanvi.py \
         --query-h5ad ${query_h5ad} \
-        --validation-manifest ${validation_manifest} \
+        --shared-genes ${shared_genes} \
         --model-dir ${scanvi_model_dir} \
         --label-column '${params.scanvi_obs_col}' \
         --score-column '${params.scanvi_score_col}' \
@@ -203,6 +180,7 @@ process SCANVI_ANNOTATE {
 
 process MERGE_ANNOTATIONS {
     label 'normal'
+    publishDir outputDir, mode: 'copy', overwrite: true
 
     input:
     path query_h5ad
@@ -211,6 +189,7 @@ process MERGE_ANNOTATIONS {
 
     output:
     path "${params.project_tag}.annotated.h5ad", emit: h5ad
+    path "${params.project_tag}.cluster_annotation_summary.csv", emit: cluster_summary
 
     script:
     """
@@ -218,9 +197,11 @@ process MERGE_ANNOTATIONS {
         --query-h5ad ${query_h5ad} \
         --celltypist-csv ${celltypist_csv} \
         --scanvi-csv ${scanvi_csv} \
+        --cluster-column '${params.query_cluster_col}' \
         --scanvi-label-column '${params.scanvi_obs_col}' \
         --scanvi-score-column '${params.scanvi_score_col}' \
-        --output ${params.project_tag}.annotated.h5ad
+        --output ${params.project_tag}.annotated.h5ad \
+        --cluster-summary-output ${params.project_tag}.cluster_annotation_summary.csv
     """
 }
 
@@ -233,18 +214,20 @@ workflow {
         .value(queryH5ad)
         .set { query_h5ad_ch }
 
-    validation_manifest_ch = VALIDATE_INPUTS(ref_h5ad_ch, query_h5ad_ch).manifest
+    validation_outputs = VALIDATE_INPUTS(ref_h5ad_ch, query_h5ad_ch)
+    validation_manifest_ch = validation_outputs.manifest
+    shared_genes_ch = validation_outputs.shared_genes
 
     celltypist_model_ch = celltypistMode == 'pretrained'
-        ? CELLTYPIST_STAGE_PRETRAINED_MODEL(Channel.value(file(params.celltypist_model, checkIfExists: true))).model
-        : CELLTYPIST_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch).model
+        ? Channel.value(file(params.celltypist_model, checkIfExists: true))
+        : CELLTYPIST_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch, shared_genes_ch).model
 
     scanvi_model_ch = scanviMode == 'pretrained'
-        ? SCANVI_STAGE_PRETRAINED_MODEL(Channel.value(file(params.scanvi_model_dir, checkIfExists: true))).model_dir
-        : SCANVI_TRAIN_MODEL(ref_h5ad_ch, query_h5ad_ch, validation_manifest_ch).model_dir
+        ? Channel.value(file(params.scanvi_model_dir, checkIfExists: true))
+        : SCANVI_TRAIN_MODEL(ref_h5ad_ch, query_h5ad_ch, validation_manifest_ch, shared_genes_ch).model_dir
 
-    celltypist_predictions_ch = CELLTYPIST_ANNOTATE(query_h5ad_ch, validation_manifest_ch, celltypist_model_ch).predictions
-    scanvi_predictions_ch = SCANVI_ANNOTATE(query_h5ad_ch, validation_manifest_ch, scanvi_model_ch).predictions
+    celltypist_predictions_ch = CELLTYPIST_ANNOTATE(query_h5ad_ch, shared_genes_ch, celltypist_model_ch).predictions
+    scanvi_predictions_ch = SCANVI_ANNOTATE(query_h5ad_ch, shared_genes_ch, scanvi_model_ch).predictions
 
     MERGE_ANNOTATIONS(query_h5ad_ch, celltypist_predictions_ch, scanvi_predictions_ch)
 }

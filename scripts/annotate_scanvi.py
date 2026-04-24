@@ -14,7 +14,7 @@ from scvi.model import SCANVI
 def parse_args():
     parser = argparse.ArgumentParser(description="Annotate query cells using a trained scANVI model.")
     parser.add_argument("--query-h5ad", required=True)
-    parser.add_argument("--validation-manifest", required=True)
+    parser.add_argument("--shared-genes", required=True)
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--label-column", required=True)
     parser.add_argument("--score-column", required=True)
@@ -38,19 +38,31 @@ def align_adata_to_gene_list(adata: ad.AnnData, genes: list[str]) -> ad.AnnData:
     return ad.AnnData(X=aligned_matrix, obs=adata.obs.copy(), var=pd.DataFrame(index=genes))
 
 
-def load_gene_list(model_dir: str, manifest_genes: list[str]) -> list[str]:
+def read_gene_list(path: str) -> list[str]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip()]
+
+
+def load_gene_list(model_dir: str, shared_genes_path: str) -> list[str]:
     metadata_path = Path(model_dir) / "scanvi_model_metadata.json"
     if metadata_path.exists():
         with open(metadata_path, "r", encoding="utf-8") as handle:
             return json.load(handle)["genes"]
-    return manifest_genes
+    return read_gene_list(shared_genes_path)
+
+
+def ensure_scanvi_label_column(adata: ad.AnnData, metadata: dict) -> ad.AnnData:
+    unknown_label = metadata.get("unknown_label")
+    if not unknown_label:
+        return adata
+
+    prepared = adata.copy()
+    prepared.obs["_scanvi_label"] = pd.Categorical([unknown_label] * prepared.n_obs)
+    return prepared
 
 
 def main():
     args = parse_args()
-
-    with open(args.validation_manifest, "r", encoding="utf-8") as handle:
-        manifest = json.load(handle)
 
     query = ad.read_h5ad(args.query_h5ad)
     query.var_names_make_unique()
@@ -73,8 +85,9 @@ def main():
         labels = scanvi.predict()
         soft = scanvi.predict(soft=True)
     else:
-        model_genes = load_gene_list(args.model_dir, manifest["shared_genes"])
+        model_genes = load_gene_list(args.model_dir, args.shared_genes)
         active_query = align_adata_to_gene_list(query, model_genes)
+        active_query = ensure_scanvi_label_column(active_query, metadata)
         scanvi = SCANVI.load(args.model_dir, adata=active_query)
         labels = scanvi.predict(active_query)
         soft = scanvi.predict(active_query, soft=True)

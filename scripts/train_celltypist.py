@@ -12,6 +12,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train a CellTypist model from a reference h5ad.")
     parser.add_argument("--ref-h5ad", required=True)
     parser.add_argument("--validation-manifest", required=True)
+    parser.add_argument("--shared-genes", required=True)
     parser.add_argument("--ref-label-col", required=True)
     parser.add_argument("--output-model", required=True)
     parser.add_argument("--output-metadata", required=True)
@@ -79,6 +80,11 @@ def apply_reference_timepoint_filter(adata: sc.AnnData, manifest: dict) -> sc.An
     return filtered
 
 
+def read_gene_list(path: str) -> list[str]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip()]
+
+
 def main():
     args = parse_args()
 
@@ -90,7 +96,7 @@ def main():
     sc.pp.normalize_total(ref, target_sum=1e4)
     sc.pp.log1p(ref)
     ref = apply_reference_timepoint_filter(ref, manifest)
-    shared_genes = manifest["shared_genes"]
+    shared_genes = read_gene_list(args.shared_genes)
     ref = ref[:, shared_genes].copy()
 
     training_adata = ref

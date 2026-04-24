@@ -17,6 +17,7 @@ def parse_args():
     parser.add_argument("--ref-timepoint-col")
     parser.add_argument("--ref-timepoints")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--shared-genes-output", required=True)
     return parser.parse_args()
 
 
@@ -117,7 +118,6 @@ def main():
         "ref_timepoints": selected_timepoints,
         "gene_id_type": ref_gene_id_type,
         "shared_gene_count": len(shared_genes),
-        "shared_genes": shared_genes,
         "ref_cell_count": int(ref.n_obs),
         "filtered_ref_cell_count": filtered_ref_cell_count,
         "query_cell_count": int(query.n_obs),
@@ -125,6 +125,10 @@ def main():
 
     with open(args.output, "w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2)
+
+    with open(args.shared_genes_output, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(shared_genes))
+        handle.write("\n")
 
 
 if __name__ == "__main__":
