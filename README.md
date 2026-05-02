@@ -1,6 +1,6 @@
 # nf-autoannotate
 
-`nf-autoannotate` is a Nextflow pipeline that annotates a query `.h5ad` dataset with two methods in parallel:
+`nf-autoannotate` is a Nextflow pipeline that annotates a `query.h5ad` dataset with two methods in parallel:
 
 - CellTypist
 - scANVI
@@ -270,6 +270,27 @@ Nextflow reporting is enabled and writes:
 under `autoannotate-reports-<project_tag>/`.
 
 ## Example Commands
+
+## Codespaces / Local Development
+
+This repository now includes a dev container definition for GitHub Codespaces under `.devcontainer/`.
+
+When running in Codespaces or on a local workstation without LSF/Singularity, use the `local` Nextflow profile:
+
+```bash
+nextflow run main.nf -profile local \
+  --ref_h5ad /path/to/reference.h5ad \
+  --query_h5ad /path/to/query.h5ad \
+  --project_tag test_run \
+  --ref_label_col cell_type \
+  --batch_key donor
+```
+
+Notes:
+
+- The `local` profile disables cluster executor settings and containers from the default config.
+- Resource requests are reduced in `-profile local` so the workflow is better suited to Codespaces.
+- scANVI steps still benefit from GPU, but can run on CPU for development.
 
 ### Train Both Models
 
