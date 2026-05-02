@@ -12,6 +12,6 @@
       ]
     }
   },
-  "postCreateCommand": "python --version && java -version && nextflow -version",
+  "postCreateCommand": "bash .devcontainer/post-create.sh || true",
   "remoteUser": "vscode"
 }
