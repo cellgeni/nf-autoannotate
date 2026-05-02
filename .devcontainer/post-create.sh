@@ -4,6 +4,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MARKER_FILE="${REPO_ROOT}/.devcontainer/.deps-installed"
 
+if [[ "${CODESPACES_RECOVERY_CONTAINER:-}" == "true" ]]; then
+  echo "Recovery container detected. Skipping dependency installation."
+  echo "Rebuild into the regular devcontainer to install project dependencies."
+  exit 0
+fi
+
 if [[ -f "${MARKER_FILE}" ]]; then
   echo "Dependencies already installed. Skipping."
   python --version
@@ -46,7 +52,26 @@ if ! command -v java >/dev/null 2>&1; then
   echo "Java not found. Installing OpenJDK 17 runtime..."
   if command -v apt-get >/dev/null 2>&1; then
     run_privileged apt-get update
-    run_privileged apt-get install -y --no-install-recommends openjdk-17-jre-headless
+    # Prefer Java 17+, but handle distro/package naming differences.
+    JAVA_APT_PACKAGES=(
+      openjdk-21-jre-headless
+      openjdk-17-jre-headless
+      default-jre-headless
+    )
+
+    java_pkg_installed="false"
+    for pkg in "${JAVA_APT_PACKAGES[@]}"; do
+      if run_privileged apt-get install -y --no-install-recommends "$pkg"; then
+        java_pkg_installed="true"
+        break
+      fi
+      echo "Package '$pkg' not available. Trying next Java package..."
+    done
+
+    if [[ "${java_pkg_installed}" != "true" ]]; then
+      echo "Unable to install Java from apt-get using known package names." >&2
+      exit 1
+    fi
   elif command -v apk >/dev/null 2>&1; then
     run_privileged apk add --no-cache openjdk17-jre-headless
   else
@@ -119,3 +144,4 @@ python -m pip install "${PIP_BREAK_FLAG[@]}" --no-cache-dir --prefer-binary rapi
 touch "${MARKER_FILE}"
 
 echo "Post-create dependency install complete."
+
