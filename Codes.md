@@ -1,0 +1,1 @@
+[train_scanvi.py](https://github.com/cellgeni/nf-autoannotate/blob/38e83accdce974c1ded982923b7b7873da3dc799/scripts/train_scanvi.py#L94) - scanvi training
