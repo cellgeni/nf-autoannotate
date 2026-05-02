@@ -1,0 +1,21 @@
+data/
+
+# Python virtual environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+
+# Editor settings
+.vscode/
+
+# Nextflow local state and logs
+.nextflow/
+.nextflow*
+*.nextflow.log*
+
+# Nextflow working directory
+nf-work/
+
+# Pipeline outputs and reports
+autoannotate-results-*/
+autoannotate-reports-*/
