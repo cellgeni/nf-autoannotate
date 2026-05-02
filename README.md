@@ -45,6 +45,54 @@ The workflow is implemented in [`main.nf`](/lustre/scratch127/cellgen/cellgeni/b
 - `annotate_scanvi.py`
 - `merge_annotations.py`
 
+## Create A Demo Reference/Query Split
+
+If you want sample data quickly, you can download a Scanpy dataset and split it into reference/query files:
+
+```bash
+python scripts/prepare_scanpy_dataset.py \
+  --dataset pbmc68k \
+  --query-fraction 0.2 \
+  --outdir demo_data/pbmc68k_split
+```
+
+This writes:
+
+- `demo_data/pbmc68k_split/reference.h5ad` (80%)
+- `demo_data/pbmc68k_split/query.h5ad` (20%)
+- `demo_data/pbmc68k_split/dataset_split_metadata.json`
+
+`--dataset pbmc68k` now uses the full PBMC68k file from Figshare (file id `27686886`). If you specifically want Scanpy's reduced object, use `--dataset pbmc68k_reduced`.
+
+By default, the script will stratify by a useful label column if one exists so label composition is better preserved in both splits. You can force a specific column with:
+
+```bash
+python scripts/prepare_scanpy_dataset.py \
+  --dataset pbmc68k \
+  --stratify-col bulk_labels \
+  --query-fraction 0.2 \
+  --seed 42 \
+  --outdir demo_data/pbmc68k_split
+```
+
+You can also split your own dataset from a local `.h5ad` file:
+
+```bash
+python scripts/prepare_scanpy_dataset.py \
+  --input-h5ad path/to/your_dataset.h5ad \
+  --query-fraction 0.2 \
+  --outdir demo_data/custom_split
+```
+
+Or download directly from a URL (for example Figshare):
+
+```bash
+python scripts/prepare_scanpy_dataset.py \
+  --input-url https://figshare.com/ndownloader/files/27686886 \
+  --query-fraction 0.2 \
+  --outdir demo_data/figshare_split
+```
+
 ## Inputs
 
 ### Required Parameters
