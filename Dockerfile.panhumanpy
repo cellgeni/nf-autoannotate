@@ -1,0 +1,10 @@
+FROM python:3.12
+
+RUN pip install --no-cache-dir \
+    "numpy<2" \
+    "tensorflow==2.17.*" \
+    "scikit-learn==1.6.0"
+
+RUN pip install --no-cache-dir git+https://github.com/satijalab/panhumanpy.git
+
+RUN python -c "import tensorflow as tf; import panhumanpy; print(f'tensorflow={tf.__version__}')"

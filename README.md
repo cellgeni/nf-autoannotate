@@ -1,11 +1,12 @@
 # nf-autoannotate
 
-`nf-autoannotate` is a Nextflow pipeline that annotates a query `.h5ad` dataset with two methods in parallel:
+`nf-autoannotate` is a Nextflow pipeline that annotates a query `.h5ad` dataset with three methods in parallel:
 
 - CellTypist
 - scANVI
+- PanHumanPy / Pan-Human Azimuth
 
-It then merges both sets of per-cell predictions back into the original query AnnData object and writes a final annotated `.h5ad`.
+It then merges the per-cell predictions back into the original query AnnData object and writes a final annotated `.h5ad`.
 
 ## What The Pipeline Does
 
@@ -23,9 +24,10 @@ It performs these stages:
    This can either train from the reference/query pair or reuse a pretrained model directory.
 4. Run CellTypist annotation on the query.
 5. Run scANVI annotation on the query.
-6. Merge both outputs into the query `.h5ad`.
+6. Run PanHumanPy annotation on the query.
+7. Merge all outputs into the query `.h5ad`.
 
-The final output contains both methods independently. This version does not compute a consensus label.
+The final output contains all methods independently. This version does not compute a consensus label.
 
 CellTypist training supports two modes:
 
@@ -43,6 +45,7 @@ The workflow is implemented in [`main.nf`](/lustre/scratch127/cellgen/cellgeni/b
 - `annotate_celltypist.py`
 - `train_scanvi.py`
 - `annotate_scanvi.py`
+- `annotate_panhumanpy.py`
 - `merge_annotations.py`
 
 ## Inputs
@@ -60,8 +63,6 @@ The workflow is implemented in [`main.nf`](/lustre/scratch127/cellgen/cellgeni/b
   Default: `autoannotate-results-<project_tag>`
 - `--ref_label_col`
   Column in `ref_h5ad.obs` containing reference cell type labels.
-- `--batch_key`
-  Column present in both `ref_h5ad.obs` and `query_h5ad.obs` used for scVI/scANVI setup.
 - `--ref_timepoint_col`
   Optional reference `obs` column containing timepoint information used to restrict the reference before training.
   Must be used together with `--ref_timepoints`.
@@ -71,6 +72,24 @@ The workflow is implemented in [`main.nf`](/lustre/scratch127/cellgen/cellgeni/b
 
 ### Optional Parameters
 
+- `--batch_key`
+  Optional column present in both `ref_h5ad.obs` and `query_h5ad.obs` used for scVI/scANVI setup.
+  If omitted, scVI/scANVI is set up with `batch_key=None`.
+- `--scanvi_categorical_covariate_keys`
+  Optional comma-separated `obs` columns present in both `ref_h5ad` and `query_h5ad` to pass to `SCVI.setup_anndata(..., categorical_covariate_keys=...)`.
+  These should be additional covariates, not the batch key itself.
+  Default: unset
+- `--scanvi_hvg_n_top_genes`
+  Number of highly variable genes to use for newly trained scVI/scANVI models.
+  Set to `0` to keep all shared genes.
+  Default: `2500`
+- `--panhumanpy_feature_names_col`
+  Optional query `var` column containing gene symbols for PanHumanPy when `query.var_names` are not gene symbols.
+  This is passed to `panhumanpy.AzimuthNN(..., feature_names_col=...)`.
+  Default: unset
+- `--panhumanpy_container`
+  Singularity image used only for the `PANHUMANPY_ANNOTATE` process.
+  Default: `/nfs/cellgeni/singularity/images/autoannotate-panhumanpy-0.1.0.sif`
 - `--celltypist_model`
   Path to a pretrained CellTypist model file.
 - `--scanvi_model_dir`
@@ -91,7 +110,7 @@ The workflow is implemented in [`main.nf`](/lustre/scratch127/cellgen/cellgeni/b
   Output column name for scANVI confidence.
   Default: `scanvi_confidence`
 - `--query_cluster_col`
-  Query `obs` column used for cluster-level annotation comparison during merge.
+  Query `obs` column used for CellTypist/scANVI cluster-level comparison and independent per-method cluster summaries during merge.
   If the column is absent, the merge step computes Leiden clusters with this
   column name.
   Default: `leiden`
@@ -129,7 +148,9 @@ Before any model runs, the pipeline validates that:
 - `ref_h5ad` exists
 - `query_h5ad` exists
 - `ref_label_col` exists in `ref_h5ad.obs`
-- `batch_key` exists in both `ref_h5ad.obs` and `query_h5ad.obs`
+- if supplied, `batch_key` exists in both `ref_h5ad.obs` and `query_h5ad.obs`
+- if supplied, every `scanvi_categorical_covariate_keys` column exists in both `ref_h5ad.obs` and `query_h5ad.obs`
+- if supplied, `panhumanpy_feature_names_col` exists in `query_h5ad.var`
 - if timepoint filtering is requested, `ref_timepoint_col` exists in `ref_h5ad.obs`
 - if timepoint filtering is requested, all requested `ref_timepoints` exist in the reference
 - cell indices are unique in both objects
@@ -140,6 +161,8 @@ If validation passes, the pipeline writes a `validation_manifest.json` file. Thi
 - the resolved input file paths
 - `ref_label_col`
 - `batch_key`
+- `categorical_covariate_keys`
+- `panhumanpy_feature_names_col`
 - the optional reference timepoint filter column and selected timepoints
 - the shared gene count
 - reference and query cell counts
@@ -154,7 +177,7 @@ If neither pretrained artifact is supplied, the pipeline:
 
 - trains CellTypist from `ref_h5ad`
 - trains scANVI from `ref_h5ad` and `query_h5ad`
-- annotates the query with both models
+- annotates the query with CellTypist, scANVI, and PanHumanPy
 
 ### Reuse Pretrained CellTypist
 
@@ -187,9 +210,25 @@ These CellTypist output columns are fixed:
 - `celltypist_majority_voting`
 - `celltypist_confidence`
 
+### PanHumanPy / Pan-Human Azimuth Annotation
+
+PanHumanPy runs directly on the query AnnData object using the high-level `panhumanpy.AzimuthNN` interface. The pipeline also calls the built-in refinement step when available.
+
+PanHumanPy output columns are fixed:
+
+- `panhumanpy_full_hierarchical_label`
+- `panhumanpy_level_zero_label`
+- `panhumanpy_final_level_label`
+- `panhumanpy_confidence`
+- `panhumanpy_azimuth_broad`
+- `panhumanpy_azimuth_medium`
+- `panhumanpy_azimuth_fine`
+
 ### Reuse Pretrained scANVI
 
 If `--scanvi_model_dir` is supplied, or `--scanvi_mode pretrained` is set, the pipeline skips scANVI training and uses that model directory for inference.
+
+When the pipeline trains scVI/scANVI itself, scVI is fit on highly variable genes only. The default is `--scanvi_hvg_n_top_genes 2500`; set it to `0` to use all validated shared genes. If `--scvi_reference_model_dir` or `--scanvi_model_dir` is supplied, the model's existing feature space is used instead.
 
 ### Initialize scANVI From A Pretrained scVI Reference Model
 
@@ -203,7 +242,7 @@ If `--scvi_reference_model_dir` is supplied while `scanvi_mode` remains `train`,
 
 ### Mixed Mode
 
-The two methods are independent. One can be trained while the other uses a pretrained artifact.
+The methods are independent. CellTypist and scANVI can be trained or reused separately, while PanHumanPy runs directly on the query.
 
 ## Outputs
 
@@ -219,32 +258,39 @@ Published files:
 - `<project_tag>.annotated.h5ad`
 - `<project_tag>.cluster_annotation_summary.csv`
 
-This file is the original query AnnData with additional columns in `obs`:
+This file is the original query AnnData with additional columns in `obs`. The merge step copies method outputs into `query.obs` and creates only CellTypist-vs-scANVI comparison columns. PanHumanPy is not compared with the other methods because it uses a different reference.
 
-- CellTypist predicted label column
-- CellTypist majority-voting label column
-- CellTypist confidence column
-- scANVI label column
-- scANVI confidence column
-- `celltypist_scanvi_agree`
-- `celltypist_scanvi_cluster_modal_match`
-- `celltypist_scanvi_cluster_agreement_fraction`
+Per-cell annotation columns copied into `query.obs`:
 
-By default those are:
+- `celltypist_predicted_label`: raw per-cell CellTypist prediction before majority voting.
+- `celltypist_majority_voting`: CellTypist label after neighborhood majority voting; this is the CellTypist label used for CellTypist-vs-scANVI comparisons.
+- `celltypist_confidence`: CellTypist probability assigned to the majority-voting label when available, otherwise the maximum probability in that cell.
+- `<scanvi_obs_col>`, default `scanvi_label`: scANVI predicted label.
+- `<scanvi_score_col>`, default `scanvi_confidence`: maximum scANVI class probability for the predicted label.
+- `panhumanpy_full_hierarchical_label`: PanHumanPy full hierarchy label from the Pan-Human Azimuth reference.
+- `panhumanpy_level_zero_label`: PanHumanPy broadest level-zero label.
+- `panhumanpy_final_level_label`: PanHumanPy final selected label for the cell.
+- `panhumanpy_confidence`: PanHumanPy final-level softmax probability.
+- `panhumanpy_azimuth_broad`, `panhumanpy_azimuth_medium`, `panhumanpy_azimuth_fine`: refined PanHumanPy labels when the refinement step returns them.
 
-- `celltypist_predicted_label`
-- `celltypist_label`
-- `celltypist_confidence`
-- `scanvi_label`
-- `scanvi_confidence`
+Columns created by `merge_annotations.py` in `query.obs`:
 
-This summary is grouped by `--query_cluster_col` and includes:
+- `celltypist_scanvi_agree`: per-cell boolean; `true` when `celltypist_majority_voting` equals the scANVI label column.
+- `celltypist_scanvi_cluster_modal_match`: cluster-level boolean copied onto every cell in the cluster; `true` when the top CellTypist majority-voting label in that cluster equals the top scANVI label in that cluster.
+- `celltypist_scanvi_cluster_agreement_fraction`: cluster-level fraction copied onto every cell in the cluster; the fraction of cells in that cluster where `celltypist_scanvi_agree` is `true`.
 
-- cluster size
-- top CellTypist majority-voting label and its fraction
-- top scANVI label and its fraction
-- whether the cluster modal labels match
-- per-cluster fraction of cells where CellTypist and scANVI agree
+The cluster summary is grouped by `--query_cluster_col` and includes:
+
+- `<query_cluster_col>`: cluster identifier.
+- `n_cells`: number of cells in the cluster.
+- `celltypist_majority_top_label`: most frequent CellTypist majority-voting label in the cluster.
+- `celltypist_majority_top_fraction`: fraction of non-missing CellTypist labels in the cluster assigned to `celltypist_majority_top_label`.
+- `scanvi_top_label`: most frequent scANVI label in the cluster.
+- `scanvi_top_fraction`: fraction of non-missing scANVI labels in the cluster assigned to `scanvi_top_label`.
+- `panhumanpy_top_label`: most frequent PanHumanPy final-level label in the cluster, reported independently.
+- `panhumanpy_top_fraction`: fraction of non-missing PanHumanPy final-level labels in the cluster assigned to `panhumanpy_top_label`.
+- `celltypist_scanvi_cluster_modal_match`: whether the cluster-level CellTypist and scANVI modal labels match.
+- `celltypist_scanvi_cluster_agreement_fraction`: fraction of cells in the cluster where CellTypist and scANVI agree.
 
 ### Intermediate Outputs
 
@@ -258,6 +304,7 @@ The workflow also produces intermediates in task work directories, including:
 - `scanvi_model/`
 - `scanvi_model_metadata.json`
 - `scanvi_predictions.csv`
+- `panhumanpy_predictions.csv`
 
 ### Reports
 
@@ -326,19 +373,21 @@ Default process labels are configured in [`nextflow.config`](/lustre/scratch127/
 - `normalgpu`
   scANVI training and annotation
 
-The pipeline currently uses the container:
+The pipeline uses two containers:
 
-- `/nfs/cellgeni/singularity/images/scautoqc-v0.8.0.sif`
+- `/nfs/cellgeni/singularity/images/autoannotate-0.1.0.sif` for the main CellTypist/scVI/scANVI steps
+- `--panhumanpy_container`, defaulting to `/nfs/cellgeni/singularity/images/autoannotate-panhumanpy-0.1.0.sif`, for `PANHUMANPY_ANNOTATE` only
 
-and runs with LSF executor settings defined in `nextflow.config`.
+This keeps PanHumanPy's TensorFlow dependency stack isolated from the main scverse/RAPIDS image. The pipeline runs with LSF executor settings defined in `nextflow.config`.
 
 ## Assumptions And Current Behavior
 
 - The input `.h5ad` files are assumed to already be preprocessed appropriately for annotation.
 - The pipeline only performs structural validation and feature alignment.
 - Gene alignment is based on the reference-query intersection computed during validation.
+- PanHumanPy receives the original query feature space; the upstream PanHumanPy guidance is to keep all quantified genes for annotation.
 - CellTypist `detailed` training is label-balanced by capped per-label downsampling, which is intended to reduce domination by very common labels.
-- CellTypist and scANVI outputs are kept separate.
+- CellTypist, scANVI, and PanHumanPy outputs are kept separate.
 - Only the top predicted label and one confidence value per method are stored.
 - The final merge updates `query.obs` and preserves the rest of the AnnData object.
 
@@ -348,9 +397,12 @@ Core files:
 
 - [`main.nf`](/lustre/scratch127/cellgen/cellgeni/bc8/_repos/nf-autoannotate/main.nf)
 - [`nextflow.config`](/lustre/scratch127/cellgen/cellgeni/bc8/_repos/nf-autoannotate/nextflow.config)
+- [`Dockerfile`](/lustre/scratch127/cellgen/cellgeni/bc8/_repos/nf-autoannotate/Dockerfile)
+- [`Dockerfile.panhumanpy`](/lustre/scratch127/cellgen/cellgeni/bc8/_repos/nf-autoannotate/Dockerfile.panhumanpy)
 - [`scripts/validate_inputs.py`](/lustre/scratch127/cellgen/cellgeni/bc8/_repos/nf-autoannotate/scripts/validate_inputs.py)
 - [`scripts/train_celltypist.py`](/lustre/scratch127/cellgen/cellgeni/bc8/_repos/nf-autoannotate/scripts/train_celltypist.py)
 - [`scripts/annotate_celltypist.py`](/lustre/scratch127/cellgen/cellgeni/bc8/_repos/nf-autoannotate/scripts/annotate_celltypist.py)
 - [`scripts/train_scanvi.py`](/lustre/scratch127/cellgen/cellgeni/bc8/_repos/nf-autoannotate/scripts/train_scanvi.py)
 - [`scripts/annotate_scanvi.py`](/lustre/scratch127/cellgen/cellgeni/bc8/_repos/nf-autoannotate/scripts/annotate_scanvi.py)
+- [`scripts/annotate_panhumanpy.py`](/lustre/scratch127/cellgen/cellgeni/bc8/_repos/nf-autoannotate/scripts/annotate_panhumanpy.py)
 - [`scripts/merge_annotations.py`](/lustre/scratch127/cellgen/cellgeni/bc8/_repos/nf-autoannotate/scripts/merge_annotations.py)

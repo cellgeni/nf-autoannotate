@@ -12,6 +12,7 @@ def parse_args():
     parser.add_argument("--query-h5ad", required=True)
     parser.add_argument("--celltypist-csv", required=True)
     parser.add_argument("--scanvi-csv", required=True)
+    parser.add_argument("--panhumanpy-csv", required=True)
     parser.add_argument("--cluster-column", required=True)
     parser.add_argument("--scanvi-label-column", required=True)
     parser.add_argument("--scanvi-score-column", required=True)
@@ -37,8 +38,9 @@ def build_cluster_summary(merged: pd.DataFrame, cluster_column: str, scanvi_labe
     for cluster_value, cluster_df in grouped:
         celltypist_top, celltypist_top_fraction = dominant_label_and_fraction(cluster_df["celltypist_majority_voting"])
         scanvi_top, scanvi_top_fraction = dominant_label_and_fraction(cluster_df[scanvi_label_column])
-        agreement_fraction = float(cluster_df["celltypist_scanvi_agree"].fillna(False).mean())
-        dominant_match = bool(
+        panhumanpy_top, panhumanpy_top_fraction = dominant_label_and_fraction(cluster_df["panhumanpy_final_level_label"])
+        celltypist_scanvi_agreement_fraction = float(cluster_df["celltypist_scanvi_agree"].fillna(False).mean())
+        celltypist_scanvi_dominant_match = bool(
             celltypist_top is not None
             and scanvi_top is not None
             and celltypist_top == scanvi_top
@@ -52,8 +54,10 @@ def build_cluster_summary(merged: pd.DataFrame, cluster_column: str, scanvi_labe
                 "celltypist_majority_top_fraction": celltypist_top_fraction,
                 "scanvi_top_label": scanvi_top,
                 "scanvi_top_fraction": scanvi_top_fraction,
-                "celltypist_scanvi_cluster_modal_match": dominant_match,
-                "celltypist_scanvi_cluster_agreement_fraction": agreement_fraction,
+                "panhumanpy_top_label": panhumanpy_top,
+                "panhumanpy_top_fraction": panhumanpy_top_fraction,
+                "celltypist_scanvi_cluster_modal_match": celltypist_scanvi_dominant_match,
+                "celltypist_scanvi_cluster_agreement_fraction": celltypist_scanvi_agreement_fraction,
             }
         )
 
@@ -96,6 +100,7 @@ def main():
 
     celltypist = pd.read_csv(args.celltypist_csv).set_index("cell_id")
     scanvi = pd.read_csv(args.scanvi_csv).set_index("cell_id")
+    panhumanpy = pd.read_csv(args.panhumanpy_csv).set_index("cell_id")
 
     expected_columns = {
         "celltypist_predicted_label",
@@ -103,13 +108,17 @@ def main():
         "celltypist_confidence",
         args.scanvi_label_column,
         args.scanvi_score_column,
+        "panhumanpy_full_hierarchical_label",
+        "panhumanpy_level_zero_label",
+        "panhumanpy_final_level_label",
+        "panhumanpy_confidence",
     }
-    observed_columns = set(celltypist.columns).union(scanvi.columns)
+    observed_columns = set(celltypist.columns).union(scanvi.columns).union(panhumanpy.columns)
     missing_columns = sorted(expected_columns - observed_columns)
     if missing_columns:
         raise ValueError(f"Annotation CSVs are missing expected columns: {', '.join(missing_columns)}")
 
-    merged = query.obs.join(celltypist, how="left").join(scanvi, how="left")
+    merged = query.obs.join(celltypist, how="left").join(scanvi, how="left").join(panhumanpy, how="left")
     merged["celltypist_scanvi_agree"] = (
         merged["celltypist_majority_voting"].fillna("__missing__").astype(str)
         == merged[args.scanvi_label_column].fillna("__missing__").astype(str)

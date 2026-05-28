@@ -67,6 +67,7 @@ process VALIDATE_INPUTS {
         --ref-label-col '${params.ref_label_col}' \
         ${params.batch_key ? "--batch-key '${params.batch_key}'" : ''} \
         ${params.scanvi_categorical_covariate_keys ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
+        ${params.panhumanpy_feature_names_col ? "--panhumanpy-feature-names-col '${params.panhumanpy_feature_names_col}'" : ''} \
         ${params.ref_timepoint_col ? "--ref-timepoint-col '${params.ref_timepoint_col}'" : ''} \
         ${params.ref_timepoints ? "--ref-timepoints '${params.ref_timepoints}'" : ''} \
         --output validation_manifest.json \
@@ -181,6 +182,24 @@ process SCANVI_ANNOTATE {
     """
 }
 
+process PANHUMANPY_ANNOTATE {
+    label 'normal'
+
+    input:
+    path query_h5ad
+
+    output:
+    path 'panhumanpy_predictions.csv', emit: predictions
+
+    script:
+    """
+    python3 ${projectDir}/scripts/annotate_panhumanpy.py \
+        --query-h5ad ${query_h5ad} \
+        ${params.panhumanpy_feature_names_col ? "--feature-names-col '${params.panhumanpy_feature_names_col}'" : ''} \
+        --output panhumanpy_predictions.csv
+    """
+}
+
 process MERGE_ANNOTATIONS {
     label 'normal'
     publishDir outputDir, mode: 'copy', overwrite: true
@@ -189,6 +208,7 @@ process MERGE_ANNOTATIONS {
     path query_h5ad
     path celltypist_csv
     path scanvi_csv
+    path panhumanpy_csv
 
     output:
     path "${params.project_tag}.annotated.h5ad", emit: h5ad
@@ -200,6 +220,7 @@ process MERGE_ANNOTATIONS {
         --query-h5ad ${query_h5ad} \
         --celltypist-csv ${celltypist_csv} \
         --scanvi-csv ${scanvi_csv} \
+        --panhumanpy-csv ${panhumanpy_csv} \
         --cluster-column '${params.query_cluster_col}' \
         --scanvi-label-column '${params.scanvi_obs_col}' \
         --scanvi-score-column '${params.scanvi_score_col}' \
@@ -231,6 +252,7 @@ workflow {
 
     celltypist_predictions_ch = CELLTYPIST_ANNOTATE(query_h5ad_ch, shared_genes_ch, celltypist_model_ch).predictions
     scanvi_predictions_ch = SCANVI_ANNOTATE(query_h5ad_ch, shared_genes_ch, scanvi_model_ch).predictions
+    panhumanpy_predictions_ch = PANHUMANPY_ANNOTATE(query_h5ad_ch).predictions
 
-    MERGE_ANNOTATIONS(query_h5ad_ch, celltypist_predictions_ch, scanvi_predictions_ch)
+    MERGE_ANNOTATIONS(query_h5ad_ch, celltypist_predictions_ch, scanvi_predictions_ch, panhumanpy_predictions_ch)
 }

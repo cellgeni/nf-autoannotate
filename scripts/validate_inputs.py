@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument("--ref-label-col", required=True)
     parser.add_argument("--batch-key")
     parser.add_argument("--categorical-covariate-keys")
+    parser.add_argument("--panhumanpy-feature-names-col")
     parser.add_argument("--ref-timepoint-col")
     parser.add_argument("--ref-timepoints")
     parser.add_argument("--output", required=True)
@@ -88,6 +89,11 @@ def main():
         require_obs_column(ref, covariate_key, "reference h5ad")
         require_obs_column(query, covariate_key, "query h5ad")
 
+    if args.panhumanpy_feature_names_col and args.panhumanpy_feature_names_col not in query.var:
+        raise ValueError(
+            f"Missing required var column '{args.panhumanpy_feature_names_col}' in query h5ad"
+        )
+
     require_unique_index(ref, "Reference")
     require_unique_index(query, "Query")
 
@@ -131,6 +137,7 @@ def main():
         "ref_label_col": args.ref_label_col,
         "batch_key": args.batch_key,
         "categorical_covariate_keys": categorical_covariate_keys,
+        "panhumanpy_feature_names_col": args.panhumanpy_feature_names_col,
         "ref_timepoint_col": args.ref_timepoint_col,
         "ref_timepoints": selected_timepoints,
         "gene_id_type": ref_gene_id_type,
