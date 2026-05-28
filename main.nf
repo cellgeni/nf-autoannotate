@@ -23,9 +23,6 @@ if( !params.project_tag ) {
 if( !params.ref_label_col ) {
     error "Missing required parameter: --ref_label_col"
 }
-if( !params.batch_key ) {
-    error "Missing required parameter: --batch_key"
-}
 if( (params.ref_timepoint_col && !params.ref_timepoints) || (!params.ref_timepoint_col && params.ref_timepoints) ) {
     error "Use --ref_timepoint_col and --ref_timepoints together when filtering the reference by timepoint"
 }
@@ -37,6 +34,9 @@ if( !['train', 'pretrained'].contains(celltypistMode) ) {
 }
 if( !['train', 'pretrained'].contains(scanviMode) ) {
     error "Invalid --scanvi_mode '${params.scanvi_mode}'. Expected one of: train, pretrained"
+}
+if( params.scanvi_hvg_n_top_genes.toInteger() < 0 ) {
+    error "Invalid --scanvi_hvg_n_top_genes '${params.scanvi_hvg_n_top_genes}'. Expected a non-negative integer"
 }
 if( celltypistMode == 'pretrained' && !params.celltypist_model ) {
     error "--celltypist_model is required when --celltypist_mode=pretrained"
@@ -65,7 +65,8 @@ process VALIDATE_INPUTS {
         --ref-h5ad ${ref_h5ad} \
         --query-h5ad ${query_h5ad} \
         --ref-label-col '${params.ref_label_col}' \
-        --batch-key '${params.batch_key}' \
+        ${params.batch_key ? "--batch-key '${params.batch_key}'" : ''} \
+        ${params.scanvi_categorical_covariate_keys ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
         ${params.ref_timepoint_col ? "--ref-timepoint-col '${params.ref_timepoint_col}'" : ''} \
         ${params.ref_timepoints ? "--ref-timepoints '${params.ref_timepoints}'" : ''} \
         --output validation_manifest.json \
@@ -146,8 +147,10 @@ process SCANVI_TRAIN_MODEL {
         --validation-manifest ${validation_manifest} \
         --shared-genes ${shared_genes} \
         --ref-label-col '${params.ref_label_col}' \
-        --batch-key '${params.batch_key}' \
+        ${params.batch_key ? "--batch-key '${params.batch_key}'" : ''} \
+        ${params.scanvi_categorical_covariate_keys ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
         --unknown-label '${params.unknown_label}' \
+        --hvg-n-top-genes ${params.scanvi_hvg_n_top_genes} \
         --output-model-dir scanvi_model \
         --output-metadata scanvi_model_metadata.json \
         ${params.scvi_reference_model_dir ? "--scvi-model-dir ${scviReferenceModelDir}" : ''}

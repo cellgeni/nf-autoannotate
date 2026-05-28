@@ -13,7 +13,8 @@ def parse_args():
     parser.add_argument("--ref-h5ad", required=True)
     parser.add_argument("--query-h5ad", required=True)
     parser.add_argument("--ref-label-col", required=True)
-    parser.add_argument("--batch-key", required=True)
+    parser.add_argument("--batch-key")
+    parser.add_argument("--categorical-covariate-keys")
     parser.add_argument("--ref-timepoint-col")
     parser.add_argument("--ref-timepoints")
     parser.add_argument("--output", required=True)
@@ -55,6 +56,12 @@ def parse_timepoints(raw_timepoints: str | None) -> list[str]:
     return values
 
 
+def parse_comma_separated(raw_values: str | None) -> list[str]:
+    if not raw_values:
+        return []
+    return [value.strip() for value in raw_values.split(",") if value.strip()]
+
+
 def main():
     args = parse_args()
 
@@ -70,8 +77,17 @@ def main():
     query = ad.read_h5ad(query_path, backed="r")
 
     require_obs_column(ref, args.ref_label_col, "reference h5ad")
-    require_obs_column(ref, args.batch_key, "reference h5ad")
-    require_obs_column(query, args.batch_key, "query h5ad")
+    if args.batch_key:
+        require_obs_column(ref, args.batch_key, "reference h5ad")
+        require_obs_column(query, args.batch_key, "query h5ad")
+
+    categorical_covariate_keys = parse_comma_separated(args.categorical_covariate_keys)
+    if args.batch_key and args.batch_key in categorical_covariate_keys:
+        raise ValueError("--categorical-covariate-keys should contain additional columns, not the batch key")
+    for covariate_key in categorical_covariate_keys:
+        require_obs_column(ref, covariate_key, "reference h5ad")
+        require_obs_column(query, covariate_key, "query h5ad")
+
     require_unique_index(ref, "Reference")
     require_unique_index(query, "Query")
 
@@ -114,6 +130,7 @@ def main():
         "query_h5ad": str(query_path.resolve()),
         "ref_label_col": args.ref_label_col,
         "batch_key": args.batch_key,
+        "categorical_covariate_keys": categorical_covariate_keys,
         "ref_timepoint_col": args.ref_timepoint_col,
         "ref_timepoints": selected_timepoints,
         "gene_id_type": ref_gene_id_type,

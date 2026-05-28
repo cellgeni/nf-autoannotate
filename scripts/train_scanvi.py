@@ -5,6 +5,7 @@ import json
 
 import anndata as ad
 import pandas as pd
+import scanpy as sc
 from scvi.model import SCANVI, SCVI
 
 
@@ -15,9 +16,11 @@ def parse_args():
     parser.add_argument("--validation-manifest", required=True)
     parser.add_argument("--shared-genes", required=True)
     parser.add_argument("--ref-label-col", required=True)
-    parser.add_argument("--batch-key", required=True)
+    parser.add_argument("--batch-key")
+    parser.add_argument("--categorical-covariate-keys")
     parser.add_argument("--unknown-label", required=True)
     parser.add_argument("--scvi-model-dir")
+    parser.add_argument("--hvg-n-top-genes", type=int, default=2500)
     parser.add_argument("--output-model-dir", required=True)
     parser.add_argument("--output-metadata", required=True)
     return parser.parse_args()
@@ -40,8 +43,34 @@ def read_gene_list(path: str) -> list[str]:
         return [line.strip() for line in handle if line.strip()]
 
 
+def parse_comma_separated(raw_values: str | None) -> list[str]:
+    if not raw_values:
+        return []
+    return [value.strip() for value in raw_values.split(",") if value.strip()]
+
+
+def subset_to_hvgs(adata: ad.AnnData, n_top_genes: int, batch_key: str | None) -> ad.AnnData:
+    if n_top_genes <= 0 or adata.n_vars <= n_top_genes:
+        return adata
+
+    hvg_batch_key = batch_key if batch_key and batch_key in adata.obs else None
+    sc.pp.highly_variable_genes(
+        adata,
+        n_top_genes=n_top_genes,
+        batch_key=hvg_batch_key,
+        flavor="seurat_v3",
+        subset=False,
+    )
+    hvg_mask = adata.var["highly_variable"].fillna(False).to_numpy()
+    if not hvg_mask.any():
+        raise ValueError("HVG selection did not identify any genes for scVI training")
+    return adata[:, hvg_mask].copy()
+
+
 def main():
     args = parse_args()
+    if args.hvg_n_top_genes < 0:
+        raise ValueError("--hvg-n-top-genes must be a non-negative integer")
 
     with open(args.validation_manifest, "r", encoding="utf-8") as handle:
         manifest = json.load(handle)
@@ -80,8 +109,14 @@ def main():
             merge="same",
         )
         combined.obs["_scanvi_label"] = combined.obs["_scanvi_label"].astype(str)
+        combined = subset_to_hvgs(combined, args.hvg_n_top_genes, args.batch_key)
+        categorical_covariate_keys = parse_comma_separated(args.categorical_covariate_keys)
 
-        SCVI.setup_anndata(combined, batch_key=args.batch_key)
+        SCVI.setup_anndata(
+            combined,
+            batch_key=args.batch_key,
+            categorical_covariate_keys=categorical_covariate_keys or None,
+        )
         vae = SCVI(combined)
         vae.train()
 
@@ -92,7 +127,7 @@ def main():
             unlabeled_category=args.unknown_label,
         )
         scanvi.train()
-        genes = shared_genes
+        genes = combined.var_names.tolist()
         inference_mode = "direct_load"
 
     scanvi.save(args.output_model_dir, overwrite=True, save_anndata=True)
@@ -101,6 +136,8 @@ def main():
         "ref_label_col": args.ref_label_col,
         "batch_key": args.batch_key,
         "unknown_label": args.unknown_label,
+        "categorical_covariate_keys": parse_comma_separated(args.categorical_covariate_keys),
+        "hvg_n_top_genes": args.hvg_n_top_genes,
         "ref_timepoint_col": manifest.get("ref_timepoint_col"),
         "ref_timepoints": manifest.get("ref_timepoints", []),
         "scvi_model_dir": args.scvi_model_dir,
