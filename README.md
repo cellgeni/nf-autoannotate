@@ -10,15 +10,9 @@ The pipeline writes the method outputs back into the original query AnnData obje
 
 ## Workflow
 
-The workflow is implemented in [main.nf](main.nf) and calls helper scripts in [scripts/](scripts):
+The workflow is implemented in [main.nf](main.nf), with supporting Python scripts under [scripts/](scripts).
 
-- [validate_inputs.py](scripts/validate_inputs.py)
-- [train_celltypist.py](scripts/train_celltypist.py)
-- [annotate_celltypist.py](scripts/annotate_celltypist.py)
-- [train_scanvi.py](scripts/train_scanvi.py)
-- [annotate_scanvi.py](scripts/annotate_scanvi.py)
-- [annotate_panhumanpy.py](scripts/annotate_panhumanpy.py)
-- [merge_annotations.py](scripts/merge_annotations.py)
+[prepare_scanpy_dataset.py](scripts/prepare_scanpy_dataset.py) is a utility script for creating local demo reference/query `.h5ad` files from a Scanpy dataset or an existing AnnData file.
 
 The pipeline stages are:
 
@@ -165,6 +159,44 @@ Intermediate files remain in Nextflow work directories, including:
 - `panhumanpy_predictions.csv`
 
 Nextflow timeline, report, and trace files are written under `autoannotate-reports-<project_tag>/`.
+
+## Demo Data
+
+To create local reference and query inputs, run:
+
+```bash
+python scripts/prepare_scanpy_dataset.py --outdir data/demo
+```
+
+By default this downloads the full PBMC68K object into `data/demo/raw/`, writes an 80/20 reference/query split, and records split metadata:
+
+- `data/demo/reference.h5ad`
+- `data/demo/query.h5ad`
+- `data/demo/dataset_split_metadata.json`
+
+Use the generated files for a training-mode demo run:
+
+```bash
+module load cellgen/nextflow
+
+nextflow run main.nf \
+  --ref_h5ad data/demo/reference.h5ad \
+  --query_h5ad data/demo/query.h5ad \
+  --project_tag demo \
+  --ref_label_col bulk_labels \
+  --query_cluster_col louvain \
+  --outdir results/demo
+```
+
+The helper also supports other sources:
+
+```bash
+python scripts/prepare_scanpy_dataset.py --dataset pbmc68k_reduced --outdir data/pbmc68k_reduced_demo
+python scripts/prepare_scanpy_dataset.py --dataset pbmc3k --outdir data/pbmc3k_demo
+python scripts/prepare_scanpy_dataset.py --input-h5ad /path/to/input.h5ad --outdir data/custom_demo
+```
+
+`--dataset pbmc68k` is the default and downloads the larger Figshare-hosted PBMC68K object into the selected output directory before splitting it. `--dataset pbmc68k_reduced` and `--dataset pbmc3k` use datasets provided directly by Scanpy.
 
 ## Examples
 
