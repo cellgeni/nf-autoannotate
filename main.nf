@@ -2,15 +2,8 @@
 
 nextflow.enable.dsl=2
 
-def celltypistMode = params.celltypist_mode?.toString()?.trim()
-def scanviMode = params.scanvi_mode?.toString()?.trim()
-
-if( !celltypistMode ) {
-    celltypistMode = params.celltypist_model ? 'pretrained' : 'train'
-}
-if( !scanviMode ) {
-    scanviMode = params.scanvi_model_dir ? 'pretrained' : 'train'
-}
+def celltypistMode = params.celltypist_model ? 'pretrained' : 'train'
+def scanviMode = params.scanvi_model_dir ? 'pretrained' : 'train'
 
 def refH5ad = file(params.ref_h5ad, checkIfExists: true)
 def queryH5ad = file(params.query_h5ad, checkIfExists: true)
@@ -29,22 +22,10 @@ if( (params.ref_timepoint_col && !params.ref_timepoints) || (!params.ref_timepoi
 if( !['standard', 'detailed'].contains(params.celltypist_training_mode) ) {
     error "Invalid --celltypist_training_mode '${params.celltypist_training_mode}'. Expected one of: standard, detailed"
 }
-if( !['train', 'pretrained'].contains(celltypistMode) ) {
-    error "Invalid --celltypist_mode '${params.celltypist_mode}'. Expected one of: train, pretrained"
-}
-if( !['train', 'pretrained'].contains(scanviMode) ) {
-    error "Invalid --scanvi_mode '${params.scanvi_mode}'. Expected one of: train, pretrained"
-}
 if( params.scanvi_hvg_n_top_genes.toInteger() < 0 ) {
     error "Invalid --scanvi_hvg_n_top_genes '${params.scanvi_hvg_n_top_genes}'. Expected a non-negative integer"
 }
-if( celltypistMode == 'pretrained' && !params.celltypist_model ) {
-    error "--celltypist_model is required when --celltypist_mode=pretrained"
-}
-if( scanviMode == 'pretrained' && !params.scanvi_model_dir ) {
-    error "--scanvi_model_dir is required when --scanvi_mode=pretrained"
-}
-if( scanviMode == 'pretrained' && params.scvi_reference_model_dir ) {
+if( params.scanvi_model_dir && params.scvi_reference_model_dir ) {
     error "Use either --scanvi_model_dir for a pretrained scANVI model or --scvi_reference_model_dir to initialize scANVI training from a pretrained scVI reference model, not both"
 }
 

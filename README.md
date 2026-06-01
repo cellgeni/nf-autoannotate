@@ -44,12 +44,22 @@ Optional reference filtering:
 
 `--ref_timepoint_col` and `--ref_timepoints` must be supplied together.
 
-## Model And Annotation Options
+## Tool-Specific Parameters
 
-CellTypist:
+The pipeline selects model behavior from artifact flags instead of explicit mode flags:
 
-- `--celltypist_mode`: `train` or `pretrained`. If unset, the pipeline uses `pretrained` when `--celltypist_model` is supplied, otherwise `train`.
-- `--celltypist_model`: pretrained CellTypist model file.
+- CellTypist trains from the reference unless `--celltypist_model` is supplied.
+- scANVI loads `--scanvi_model_dir` when supplied; otherwise it trains a model, optionally initialized from `--scvi_reference_model_dir`.
+- PanHumanPy always annotates the query directly.
+
+Required when using pretrained or external artifacts:
+
+- `--celltypist_model`: required to reuse a pretrained CellTypist model.
+- `--scanvi_model_dir`: required to reuse a pretrained scANVI model directory.
+- `--scvi_reference_model_dir`: required only when initializing scANVI training from a pretrained scVI reference model. Do not combine this with `--scanvi_model_dir`.
+
+CellTypist optional controls:
+
 - `--celltypist_training_mode`: `standard` or `detailed`. Default: `detailed`.
 - `--celltypist_balance_cells_per_label`: maximum reference cells per label in detailed mode. Default: `500`.
 - `--celltypist_feature_selection`: run tutorial-style feature selection in detailed mode. Default: `true`.
@@ -57,20 +67,17 @@ CellTypist:
 - `--celltypist_feature_selection_max_iter`: quick SGD feature-selection iterations. Default: `5`.
 - `--celltypist_max_iter`: final CellTypist fit iterations. Default: `100`.
 
-CellTypist model reuse now checks that at least 80% of model genes are present in the query. This catches gene identifier mismatches before silently filling most model features with zeros.
+CellTypist model reuse checks that at least 80% of model genes are present in the query. This catches gene identifier mismatches before silently filling most model features with zeros.
 
-scANVI:
+scANVI optional controls:
 
-- `--scanvi_mode`: `train` or `pretrained`. If unset, the pipeline uses `pretrained` when `--scanvi_model_dir` is supplied, otherwise `train`.
-- `--scanvi_model_dir`: pretrained scANVI model directory.
-- `--scvi_reference_model_dir`: pretrained scVI reference model directory used to initialize scANVI training.
-- `--batch_key`: optional column present in both reference and query `obs`; omitted values stay as real `None`/`null`.
+- `--batch_key`: optional column present in both reference and query `obs`; omitted values stay as real `None`/`null`. Use this when batches should be modeled.
 - `--scanvi_categorical_covariate_keys`: optional comma-separated additional covariate columns present in both objects.
 - `--scanvi_hvg_n_top_genes`: HVGs for new scVI/scANVI training. Set `0` to keep all shared genes. Default: `2500`.
 - `--scanvi_query_max_epochs`: max epochs for query mapping from a pretrained scVI reference model. Default: `100`.
 - `--unknown_label`: unlabeled query category for scANVI training. Default: `Unknown`.
 
-PanHumanPy:
+PanHumanPy optional controls:
 
 - `--panhumanpy_feature_names_col`: optional query `var` column containing gene symbols when `query.var_names` are not gene symbols.
 
@@ -161,7 +168,7 @@ Nextflow timeline, report, and trace files are written under `autoannotate-repor
 
 ## Examples
 
-Train both reference-driven models:
+Train CellTypist and scANVI from the reference:
 
 ```bash
 module load cellgen/nextflow
@@ -175,7 +182,7 @@ nextflow run main.nf \
   --query_cluster_col leiden
 ```
 
-Reuse a pretrained CellTypist model:
+Reuse a pretrained CellTypist model while training scANVI:
 
 ```bash
 module load cellgen/nextflow
@@ -189,7 +196,7 @@ nextflow run main.nf \
   --celltypist_model /path/to/celltypist_model.pkl
 ```
 
-Reuse CellTypist and scANVI models:
+Reuse pretrained CellTypist and scANVI artifacts:
 
 ```bash
 module load cellgen/nextflow
@@ -199,10 +206,22 @@ nextflow run main.nf \
   --query_h5ad /path/to/query.h5ad \
   --project_tag test_run \
   --ref_label_col cell_type \
-  --celltypist_mode pretrained \
   --celltypist_model /path/to/celltypist_model.pkl \
-  --scanvi_mode pretrained \
   --scanvi_model_dir /path/to/scanvi_model_dir
+```
+
+Initialize scANVI training from a pretrained scVI reference model:
+
+```bash
+module load cellgen/nextflow
+
+nextflow run main.nf \
+  --ref_h5ad /path/to/reference.h5ad \
+  --query_h5ad /path/to/query.h5ad \
+  --project_tag test_run \
+  --ref_label_col cell_type \
+  --batch_key donor \
+  --scvi_reference_model_dir /path/to/scvi_model_dir
 ```
 
 Allow the merge step to compute missing Leiden clusters:
@@ -218,24 +237,6 @@ nextflow run main.nf \
   --compute_missing_clusters true
 ```
 
-## Resources And Containers
-
-The configured process labels in [nextflow.config](nextflow.config) are:
-
-- `validation`: lightweight input checks.
-- `normal`: single-core CPU tasks.
-- `cpu4`: four-core CellTypist training.
-- `gpu`: scANVI training and annotation on `gpu-normal`.
-
-`SCANVI_ANNOTATE` uses the shared `gpu` label but overrides memory to 128 GB. The unused `long` label and duplicate GPU labels were removed.
-
-Two fixed Singularity images are configured:
-
-- `/nfs/cellgeni/singularity/images/autoannotate-0.1.0.sif` for CellTypist, scVI/scANVI, validation, and merge steps.
-- `/nfs/cellgeni/singularity/images/autoannotate-0.1.0-phpy.sif` for `PANHUMANPY_ANNOTATE` only.
-
-PanHumanPy uses a separate image because its TensorFlow dependency stack is isolated from the main scverse/RAPIDS image.
-
 ## Assumptions
 
 - Input `.h5ad` files should already be normalized/preprocessed appropriately for the chosen annotation methods.
@@ -243,14 +244,3 @@ PanHumanPy uses a separate image because its TensorFlow dependency stack is isol
 - PanHumanPy receives the original query feature space, optionally using `--panhumanpy_feature_names_col` for symbols.
 - CellTypist, scANVI, and PanHumanPy outputs are kept separate.
 - PanHumanPy is not compared with CellTypist or scANVI because it uses a different reference.
-
-## Development
-
-Core files:
-
-- [main.nf](main.nf)
-- [nextflow.config](nextflow.config)
-- [Dockerfile](Dockerfile)
-- [Dockerfile.panhumanpy](Dockerfile.panhumanpy)
-- [scripts/](scripts)
-- [tests/](tests)
