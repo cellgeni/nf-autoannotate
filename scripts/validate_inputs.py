@@ -33,6 +33,11 @@ def require_unique_index(adata: ad.AnnData, label: str) -> None:
         raise ValueError(f"{label} cell indices are not unique")
 
 
+def require_unique_var_index(adata: ad.AnnData, label: str) -> None:
+    if not adata.var_names.is_unique:
+        raise ValueError(f"{label} gene indices are not unique")
+
+
 def infer_gene_id_type(var_names) -> str:
     names = [str(name) for name in var_names if str(name)]
     if not names:
@@ -96,6 +101,8 @@ def main():
 
     require_unique_index(ref, "Reference")
     require_unique_index(query, "Query")
+    require_unique_var_index(ref, "Reference")
+    require_unique_var_index(query, "Query")
 
     selected_timepoints = parse_timepoints(args.ref_timepoints)
     filtered_ref_cell_count = int(ref.n_obs)
@@ -113,9 +120,6 @@ def main():
         filtered_ref_cell_count = int(ref.obs[args.ref_timepoint_col].astype(str).isin(selected_timepoints).sum())
         if filtered_ref_cell_count == 0:
             raise ValueError("Reference timepoint filtering removed all cells")
-
-    ref.var_names_make_unique()
-    query.var_names_make_unique()
 
     ref_gene_id_type = infer_gene_id_type(ref.var_names)
     query_gene_id_type = infer_gene_id_type(query.var_names)

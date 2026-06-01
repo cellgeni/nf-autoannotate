@@ -25,16 +25,23 @@ def parse_args():
 
 def align_adata_to_gene_list(adata: ad.AnnData, genes: list[str]) -> ad.AnnData:
     gene_to_index = {gene: idx for idx, gene in enumerate(adata.var_names)}
-    matrix = adata.X.tocsr() if sparse.issparse(adata.X) else sparse.csr_matrix(adata.X)
-    aligned_blocks = []
+    matrix = adata.X.tocsc() if sparse.issparse(adata.X) else sparse.csc_matrix(adata.X)
 
-    for gene in genes:
-        if gene in gene_to_index:
-            aligned_blocks.append(matrix[:, gene_to_index[gene]])
-        else:
-            aligned_blocks.append(sparse.csr_matrix((adata.n_obs, 1), dtype=matrix.dtype))
+    target_positions = []
+    source_columns = []
+    for target_idx, gene in enumerate(genes):
+        source_idx = gene_to_index.get(gene)
+        if source_idx is not None:
+            target_positions.append(target_idx)
+            source_columns.append(source_idx)
 
-    aligned_matrix = sparse.hstack(aligned_blocks, format="csr")
+    selected = matrix[:, source_columns].tocoo()
+    remapped_columns = np.asarray(target_positions, dtype=int)[selected.col]
+    aligned_matrix = sparse.csr_matrix(
+        (selected.data, (selected.row, remapped_columns)),
+        shape=(adata.n_obs, len(genes)),
+        dtype=matrix.dtype,
+    )
     return ad.AnnData(X=aligned_matrix, obs=adata.obs.copy(), var=pd.DataFrame(index=genes))
 
 

@@ -76,7 +76,7 @@ process VALIDATE_INPUTS {
 }
 
 process CELLTYPIST_TRAIN_MODEL {
-    label 'normal4core'
+    label 'cpu4'
 
     input:
     path ref_h5ad
@@ -128,7 +128,7 @@ process CELLTYPIST_ANNOTATE {
 }
 
 process SCANVI_TRAIN_MODEL {
-    label 'normalgpu64'
+    label 'gpu'
 
     input:
     path ref_h5ad
@@ -159,7 +159,7 @@ process SCANVI_TRAIN_MODEL {
 }
 
 process SCANVI_ANNOTATE {
-    label 'normalgpu128'
+    label 'gpu'
 
     input:
     path query_h5ad
@@ -224,6 +224,7 @@ process MERGE_ANNOTATIONS {
         --cluster-column '${params.query_cluster_col}' \
         --scanvi-label-column '${params.scanvi_obs_col}' \
         --scanvi-score-column '${params.scanvi_score_col}' \
+        ${params.compute_missing_clusters ? '--compute-missing-clusters' : ''} \
         --output ${params.project_tag}.annotated.h5ad \
         --cluster-summary-output ${params.project_tag}.cluster_annotation_summary.csv
     """
