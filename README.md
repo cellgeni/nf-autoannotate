@@ -82,6 +82,8 @@ Output naming and merge behavior:
 - `--scanvi_score_col`: scANVI confidence column name in output. Default: `scanvi_confidence`.
 - `--query_cluster_col`: existing query `obs` cluster column used for cluster summaries. Default: `leiden`.
 - `--compute_missing_clusters`: compute Leiden clusters in the merge step if `--query_cluster_col` is absent. Default: `false`.
+- `--marker_genes_n_top`: number of marker genes to report per cluster. Default: `50`.
+- `--marker_genes_method`: differential-expression test for marker ranking, either `wilcoxon` or `t-test`. Default: `wilcoxon`.
 
 When missing clusters are explicitly computed, the merge step reuses existing neighbors or `X_pca` if present. Otherwise it runs PCA/neighbors/Leiden on a normalized, log-transformed copy so the final query matrix is not modified.
 
@@ -110,6 +112,7 @@ Published files:
 
 - `<project_tag>.annotated.h5ad`
 - `<project_tag>.cluster_annotation_summary.csv`
+- `<project_tag>.cluster_marker_genes.tsv`
 
 The annotated `.h5ad` is the query object with additional `obs` columns.
 
@@ -145,6 +148,18 @@ The cluster summary is grouped by `--query_cluster_col` and includes:
 - `celltypist_scanvi_cluster_agreement_fraction`: fraction of cells in the cluster where CellTypist and scANVI agree.
 
 `celltypist_scanvi_agree` and `celltypist_scanvi_cluster_modal_match` are intentionally different summaries. A cluster can have matching modal labels while many individual cells disagree. The modal-match boolean is therefore kept in the cluster summary, while the more interpretable agreement fraction is copied to `query.obs`.
+
+The marker-gene table is grouped by `--query_cluster_col` and written to `<project_tag>.cluster_marker_genes.tsv`. Marker genes are ranked with Scanpy `rank_genes_groups` on a normalized, log-transformed copy of the query object, so marker calculation does not modify the matrix written to `<project_tag>.annotated.h5ad`. The table includes:
+
+- `cluster`: cluster identifier.
+- `rank`: one-based marker rank within the cluster.
+- `gene`: gene identifier from `query.var_names`.
+- `score`: Scanpy rank score for the selected method.
+- `logfoldchange`: estimated log fold change for the cluster against the remaining cells.
+- `p_value`: nominal p-value.
+- `p_value_adj`: adjusted p-value.
+
+If the query contains fewer than two clusters, the marker-gene TSV is still written with headers but no marker rows because there is no between-cluster comparison.
 
 Intermediate files remain in Nextflow work directories, including:
 

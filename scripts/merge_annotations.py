@@ -7,6 +7,17 @@ import anndata as ad
 import pandas as pd
 
 
+MARKER_GENE_COLUMNS = [
+    "cluster",
+    "rank",
+    "gene",
+    "score",
+    "logfoldchange",
+    "p_value",
+    "p_value_adj",
+]
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Merge annotation CSVs into a query h5ad file.")
     parser.add_argument("--query-h5ad", required=True)
@@ -19,6 +30,9 @@ def parse_args():
     parser.add_argument("--compute-missing-clusters", action="store_true")
     parser.add_argument("--output", required=True)
     parser.add_argument("--cluster-summary-output", required=True)
+    parser.add_argument("--marker-genes-output", required=True)
+    parser.add_argument("--marker-genes-n-top", type=int, default=50)
+    parser.add_argument("--marker-genes-method", choices=("t-test", "wilcoxon"), default="wilcoxon")
     return parser.parse_args()
 
 
@@ -63,6 +77,53 @@ def build_cluster_summary(merged: pd.DataFrame, cluster_column: str, scanvi_labe
         )
 
     return pd.DataFrame(rows)
+
+
+def empty_marker_gene_table() -> pd.DataFrame:
+    return pd.DataFrame(columns=MARKER_GENE_COLUMNS)
+
+
+def build_marker_gene_table(
+    query: ad.AnnData,
+    cluster_column: str,
+    n_top: int,
+    method: str,
+) -> pd.DataFrame:
+    if n_top < 1:
+        raise ValueError("--marker-genes-n-top must be at least 1")
+
+    clusters = query.obs[cluster_column].astype("string").fillna("NA")
+    if clusters.nunique(dropna=False) < 2:
+        return empty_marker_gene_table()
+
+    import scanpy as sc
+
+    marker_data = query.copy()
+    marker_data.obs[cluster_column] = clusters.astype("category")
+    sc.pp.normalize_total(marker_data, target_sum=1e4)
+    sc.pp.log1p(marker_data)
+    sc.tl.rank_genes_groups(
+        marker_data,
+        groupby=cluster_column,
+        method=method,
+        n_genes=n_top,
+        use_raw=False,
+    )
+
+    marker_genes = sc.get.rank_genes_groups_df(marker_data, group=None)
+    marker_genes = marker_genes.rename(
+        columns={
+            "group": "cluster",
+            "names": "gene",
+            "scores": "score",
+            "logfoldchanges": "logfoldchange",
+            "pvals": "p_value",
+            "pvals_adj": "p_value_adj",
+        }
+    )
+    marker_genes["cluster"] = marker_genes["cluster"].astype(str)
+    marker_genes["rank"] = marker_genes.groupby("cluster", sort=False).cumcount() + 1
+    return marker_genes[MARKER_GENE_COLUMNS]
 
 
 def ensure_cluster_column(query: ad.AnnData, cluster_column: str, compute_missing_clusters: bool) -> None:
@@ -198,6 +259,12 @@ def main():
     merged["celltypist_scanvi_agree"] = celltypist_scanvi_agreement(merged, args.scanvi_label_column)
 
     cluster_summary = build_cluster_summary(merged, args.cluster_column, args.scanvi_label_column)
+    marker_genes = build_marker_gene_table(
+        query,
+        args.cluster_column,
+        args.marker_genes_n_top,
+        args.marker_genes_method,
+    )
     merged = merged.join(
         cluster_summary.set_index(args.cluster_column)[
             [
@@ -210,6 +277,7 @@ def main():
     query.obs = merged
     query.write_h5ad(args.output)
     cluster_summary.to_csv(args.cluster_summary_output, index=False)
+    marker_genes.to_csv(args.marker_genes_output, sep="\t", index=False)
 
 
 if __name__ == "__main__":
