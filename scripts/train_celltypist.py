@@ -68,15 +68,15 @@ def select_features(
     return adata[:, selected_genes].copy(), selected_genes
 
 
-def apply_reference_timepoint_filter(adata: sc.AnnData, manifest: dict) -> sc.AnnData:
-    timepoint_col = manifest.get("ref_timepoint_col")
-    timepoints = manifest.get("ref_timepoints") or []
-    if not timepoint_col or not timepoints:
+def apply_reference_filter(adata: sc.AnnData, manifest: dict) -> sc.AnnData:
+    filter_col = manifest.get("ref_filter_col") or manifest.get("ref_timepoint_col")
+    filter_values = manifest.get("ref_filter_values") or manifest.get("ref_timepoints") or []
+    if not filter_col or not filter_values:
         return adata
-    mask = adata.obs[timepoint_col].astype(str).isin(timepoints)
+    mask = adata.obs[filter_col].astype(str).isin(filter_values)
     filtered = adata[mask].copy()
     if filtered.n_obs == 0:
-        raise ValueError("Reference timepoint filtering removed all cells before CellTypist training")
+        raise ValueError("Reference filtering removed all cells before CellTypist training")
     return filtered
 
 
@@ -95,7 +95,7 @@ def main():
     ref.var_names_make_unique()
     sc.pp.normalize_total(ref, target_sum=1e4)
     sc.pp.log1p(ref)
-    ref = apply_reference_timepoint_filter(ref, manifest)
+    ref = apply_reference_filter(ref, manifest)
     shared_genes = read_gene_list(args.shared_genes)
     ref = ref[:, shared_genes].copy()
 
@@ -135,8 +135,8 @@ def main():
     metadata = {
         "ref_label_col": args.ref_label_col,
         "training_mode": args.training_mode,
-        "ref_timepoint_col": manifest.get("ref_timepoint_col"),
-        "ref_timepoints": manifest.get("ref_timepoints", []),
+        "ref_filter_col": manifest.get("ref_filter_col") or manifest.get("ref_timepoint_col"),
+        "ref_filter_values": manifest.get("ref_filter_values") or manifest.get("ref_timepoints", []),
         "shared_gene_count": len(shared_genes),
         "balanced_cell_count": balanced_cell_count,
         "feature_selection": feature_selection_used,

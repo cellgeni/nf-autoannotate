@@ -7,8 +7,8 @@ nextflow run -r main cellgeni/nf-autoannotate \
   --query_h5ad /path/to/query/h5ad \
   --ref_label_col overall_celltype \
   --batch_key sample_id \
-  --ref_timepoint_col timepoint \
-  --ref_timepoints day10 \
+  --ref_filter_col timepoint \
+  --ref_filter_values day10 \
   --project_tag test \
   --ansi-log false \
   -resume

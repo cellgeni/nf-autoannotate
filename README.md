@@ -33,10 +33,12 @@ The pipeline stages are:
 
 Optional reference filtering:
 
-- `--ref_timepoint_col`: reference `obs` column containing timepoint labels.
-- `--ref_timepoints`: comma-separated timepoints to keep, for example `E12,E14`.
+- `--ref_filter_col`: reference `obs` column used to filter the reference before model training.
+- `--ref_filter_values`: comma-separated values to keep from `--ref_filter_col`, for example `E12,E14` or `treated,control`.
 
-`--ref_timepoint_col` and `--ref_timepoints` must be supplied together.
+`--ref_filter_col` and `--ref_filter_values` must be supplied together.
+
+Deprecated aliases: `--ref_timepoint_col` and `--ref_timepoints` are still accepted for compatibility, but new runs should use `--ref_filter_col` and `--ref_filter_values`. Validation manifests and model metadata now use `ref_filter_col` and `ref_filter_values`.
 
 ## Tool-Specific Parameters
 
@@ -96,7 +98,7 @@ Before model steps run, the pipeline checks that:
 - `batch_key`, if supplied, exists in both reference and query `obs`
 - all `scanvi_categorical_covariate_keys`, if supplied, exist in both objects
 - `panhumanpy_feature_names_col`, if supplied, exists in `query_h5ad.var`
-- reference timepoint filters are valid and keep at least one reference cell
+- reference filters are valid and keep at least one reference cell
 - reference and query cell indices are unique
 - reference and query gene indices are unique
 - reference and query gene identifiers use the same broad scheme, such as symbols or Ensembl IDs

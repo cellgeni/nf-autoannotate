@@ -26,15 +26,15 @@ def parse_args():
     return parser.parse_args()
 
 
-def apply_reference_timepoint_filter(adata: ad.AnnData, manifest: dict) -> ad.AnnData:
-    timepoint_col = manifest.get("ref_timepoint_col")
-    timepoints = manifest.get("ref_timepoints") or []
-    if not timepoint_col or not timepoints:
+def apply_reference_filter(adata: ad.AnnData, manifest: dict) -> ad.AnnData:
+    filter_col = manifest.get("ref_filter_col") or manifest.get("ref_timepoint_col")
+    filter_values = manifest.get("ref_filter_values") or manifest.get("ref_timepoints") or []
+    if not filter_col or not filter_values:
         return adata
-    mask = adata.obs[timepoint_col].astype(str).isin(timepoints)
+    mask = adata.obs[filter_col].astype(str).isin(filter_values)
     filtered = adata[mask].copy()
     if filtered.n_obs == 0:
-        raise ValueError("Reference timepoint filtering removed all cells before scANVI training")
+        raise ValueError("Reference filtering removed all cells before scANVI training")
     return filtered
 
 
@@ -79,7 +79,7 @@ def main():
     query = ad.read_h5ad(args.query_h5ad)
     ref.var_names_make_unique()
     query.var_names_make_unique()
-    ref = apply_reference_timepoint_filter(ref, manifest)
+    ref = apply_reference_filter(ref, manifest)
 
     if args.scvi_model_dir:
         ref.obs["_scanvi_label"] = ref.obs[args.ref_label_col].astype(str)
@@ -138,8 +138,8 @@ def main():
         "unknown_label": args.unknown_label,
         "categorical_covariate_keys": parse_comma_separated(args.categorical_covariate_keys),
         "hvg_n_top_genes": args.hvg_n_top_genes,
-        "ref_timepoint_col": manifest.get("ref_timepoint_col"),
-        "ref_timepoints": manifest.get("ref_timepoints", []),
+        "ref_filter_col": manifest.get("ref_filter_col") or manifest.get("ref_timepoint_col"),
+        "ref_filter_values": manifest.get("ref_filter_values") or manifest.get("ref_timepoints", []),
         "scvi_model_dir": args.scvi_model_dir,
         "inference_mode": inference_mode,
         "genes": genes,

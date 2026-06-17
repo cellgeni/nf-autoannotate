@@ -16,8 +16,10 @@ def parse_args():
     parser.add_argument("--batch-key")
     parser.add_argument("--categorical-covariate-keys")
     parser.add_argument("--panhumanpy-feature-names-col")
-    parser.add_argument("--ref-timepoint-col")
-    parser.add_argument("--ref-timepoints")
+    parser.add_argument("--ref-filter-col")
+    parser.add_argument("--ref-filter-values")
+    parser.add_argument("--ref-timepoint-col", dest="deprecated_ref_timepoint_col")
+    parser.add_argument("--ref-timepoints", dest="deprecated_ref_timepoints")
     parser.add_argument("--output", required=True)
     parser.add_argument("--shared-genes-output", required=True)
     return parser.parse_args()
@@ -52,13 +54,13 @@ def infer_gene_id_type(var_names) -> str:
     return "symbol"
 
 
-def parse_timepoints(raw_timepoints: str | None) -> list[str]:
-    if not raw_timepoints:
+def parse_filter_values(raw_values: str | None) -> list[str]:
+    if not raw_values:
         return []
-    values = [value.strip() for value in raw_timepoints.split(",")]
+    values = [value.strip() for value in raw_values.split(",")]
     values = [value for value in values if value]
     if not values:
-        raise ValueError("No valid reference timepoints were provided")
+        raise ValueError("No valid reference filter values were provided")
     return values
 
 
@@ -66,6 +68,25 @@ def parse_comma_separated(raw_values: str | None) -> list[str]:
     if not raw_values:
         return []
     return [value.strip() for value in raw_values.split(",") if value.strip()]
+
+
+def resolve_reference_filter(args: argparse.Namespace) -> tuple[str | None, list[str]]:
+    if args.ref_filter_col and args.deprecated_ref_timepoint_col and (
+        args.ref_filter_col != args.deprecated_ref_timepoint_col
+    ):
+        raise ValueError("Use either --ref-filter-col or deprecated --ref-timepoint-col, not both with different values")
+    if args.ref_filter_values and args.deprecated_ref_timepoints and (
+        args.ref_filter_values != args.deprecated_ref_timepoints
+    ):
+        raise ValueError(
+            "Use either --ref-filter-values or deprecated --ref-timepoints, not both with different values"
+        )
+
+    filter_col = args.ref_filter_col or args.deprecated_ref_timepoint_col
+    filter_values = parse_filter_values(args.ref_filter_values or args.deprecated_ref_timepoints)
+    if (filter_col and not filter_values) or (not filter_col and filter_values):
+        raise ValueError("Both --ref-filter-col and --ref-filter-values are required together")
+    return filter_col, filter_values
 
 
 def main():
@@ -104,22 +125,20 @@ def main():
     require_unique_var_index(ref, "Reference")
     require_unique_var_index(query, "Query")
 
-    selected_timepoints = parse_timepoints(args.ref_timepoints)
+    ref_filter_col, ref_filter_values = resolve_reference_filter(args)
     filtered_ref_cell_count = int(ref.n_obs)
-    if args.ref_timepoint_col or selected_timepoints:
-        if not args.ref_timepoint_col or not selected_timepoints:
-            raise ValueError("Both --ref-timepoint-col and --ref-timepoints are required together")
-        require_obs_column(ref, args.ref_timepoint_col, "reference h5ad")
-        available_timepoints = sorted({str(value) for value in ref.obs[args.ref_timepoint_col].astype(str)})
-        missing_timepoints = sorted(set(selected_timepoints) - set(available_timepoints))
-        if missing_timepoints:
+    if ref_filter_col:
+        require_obs_column(ref, ref_filter_col, "reference h5ad")
+        available_filter_values = sorted({str(value) for value in ref.obs[ref_filter_col].astype(str)})
+        missing_filter_values = sorted(set(ref_filter_values) - set(available_filter_values))
+        if missing_filter_values:
             raise ValueError(
-                "Requested reference timepoint values were not found in "
-                f"'{args.ref_timepoint_col}': {', '.join(missing_timepoints)}"
+                "Requested reference filter values were not found in "
+                f"'{ref_filter_col}': {', '.join(missing_filter_values)}"
             )
-        filtered_ref_cell_count = int(ref.obs[args.ref_timepoint_col].astype(str).isin(selected_timepoints).sum())
+        filtered_ref_cell_count = int(ref.obs[ref_filter_col].astype(str).isin(ref_filter_values).sum())
         if filtered_ref_cell_count == 0:
-            raise ValueError("Reference timepoint filtering removed all cells")
+            raise ValueError("Reference filtering removed all cells")
 
     ref_gene_id_type = infer_gene_id_type(ref.var_names)
     query_gene_id_type = infer_gene_id_type(query.var_names)
@@ -142,8 +161,8 @@ def main():
         "batch_key": args.batch_key,
         "categorical_covariate_keys": categorical_covariate_keys,
         "panhumanpy_feature_names_col": args.panhumanpy_feature_names_col,
-        "ref_timepoint_col": args.ref_timepoint_col,
-        "ref_timepoints": selected_timepoints,
+        "ref_filter_col": ref_filter_col,
+        "ref_filter_values": ref_filter_values,
         "gene_id_type": ref_gene_id_type,
         "shared_gene_count": len(shared_genes),
         "ref_cell_count": int(ref.n_obs),

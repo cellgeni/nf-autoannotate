@@ -9,6 +9,8 @@ def refH5ad = file(params.ref_h5ad, checkIfExists: true)
 def queryH5ad = file(params.query_h5ad, checkIfExists: true)
 def scviReferenceModelDir = params.scvi_reference_model_dir ? file(params.scvi_reference_model_dir, checkIfExists: true) : null
 def outputDir = params.outdir?.toString()?.trim() ?: "autoannotate-results-${params.project_tag}"
+def refFilterCol = params.ref_filter_col ?: params.ref_timepoint_col
+def refFilterValues = params.ref_filter_values ?: params.ref_timepoints
 
 if( !params.project_tag ) {
     error "Missing required parameter: --project_tag"
@@ -16,8 +18,17 @@ if( !params.project_tag ) {
 if( !params.ref_label_col ) {
     error "Missing required parameter: --ref_label_col"
 }
-if( (params.ref_timepoint_col && !params.ref_timepoints) || (!params.ref_timepoint_col && params.ref_timepoints) ) {
-    error "Use --ref_timepoint_col and --ref_timepoints together when filtering the reference by timepoint"
+if( params.ref_filter_col && params.ref_timepoint_col && params.ref_filter_col != params.ref_timepoint_col ) {
+    error "Use either --ref_filter_col or deprecated --ref_timepoint_col, not both with different values"
+}
+if( params.ref_filter_values && params.ref_timepoints && params.ref_filter_values != params.ref_timepoints ) {
+    error "Use either --ref_filter_values or deprecated --ref_timepoints, not both with different values"
+}
+if( (refFilterCol && !refFilterValues) || (!refFilterCol && refFilterValues) ) {
+    error "Use --ref_filter_col and --ref_filter_values together when filtering the reference"
+}
+if( params.ref_timepoint_col || params.ref_timepoints ) {
+    log.warn "Parameters --ref_timepoint_col and --ref_timepoints are deprecated; use --ref_filter_col and --ref_filter_values instead."
 }
 if( !['standard', 'detailed'].contains(params.celltypist_training_mode) ) {
     error "Invalid --celltypist_training_mode '${params.celltypist_training_mode}'. Expected one of: standard, detailed"
@@ -49,8 +60,8 @@ process VALIDATE_INPUTS {
         ${params.batch_key ? "--batch-key '${params.batch_key}'" : ''} \
         ${params.scanvi_categorical_covariate_keys ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
         ${params.panhumanpy_feature_names_col ? "--panhumanpy-feature-names-col '${params.panhumanpy_feature_names_col}'" : ''} \
-        ${params.ref_timepoint_col ? "--ref-timepoint-col '${params.ref_timepoint_col}'" : ''} \
-        ${params.ref_timepoints ? "--ref-timepoints '${params.ref_timepoints}'" : ''} \
+        ${refFilterCol ? "--ref-filter-col '${refFilterCol}'" : ''} \
+        ${refFilterValues ? "--ref-filter-values '${refFilterValues}'" : ''} \
         --output validation_manifest.json \
         --shared-genes-output shared_genes.txt
     """
