@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument("--ref-label-col", required=True)
     parser.add_argument("--batch-key")
     parser.add_argument("--categorical-covariate-keys")
+    parser.add_argument("--continuous-covariate-keys")
     parser.add_argument("--panhumanpy-feature-names-col")
     parser.add_argument("--ref-filter-col")
     parser.add_argument("--ref-filter-values")
@@ -102,6 +103,11 @@ def main():
         require_obs_column(ref, covariate_key, "reference h5ad")
         require_obs_column(query, covariate_key, "query h5ad")
 
+    continuous_covariate_keys = parse_comma_separated(args.continuous_covariate_keys)
+    for covariate_key in continuous_covariate_keys:
+        require_obs_column(ref, covariate_key, "reference h5ad")
+        require_obs_column(query, covariate_key, "query h5ad")
+
     if args.panhumanpy_feature_names_col and args.panhumanpy_feature_names_col not in query.var:
         raise ValueError(
             f"Missing required var column '{args.panhumanpy_feature_names_col}' in query h5ad"
@@ -147,6 +153,7 @@ def main():
         "ref_label_col": args.ref_label_col,
         "batch_key": args.batch_key,
         "categorical_covariate_keys": categorical_covariate_keys,
+        "continuous_covariate_keys": continuous_covariate_keys,
         "panhumanpy_feature_names_col": args.panhumanpy_feature_names_col,
         "ref_filter_col": ref_filter_col,
         "ref_filter_values": ref_filter_values,

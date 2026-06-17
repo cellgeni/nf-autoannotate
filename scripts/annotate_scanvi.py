@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import runpy
 from pathlib import Path
 
 import anndata as ad
@@ -19,8 +20,97 @@ def parse_args():
     parser.add_argument("--label-column", required=True)
     parser.add_argument("--score-column", required=True)
     parser.add_argument("--query-max-epochs", type=int, default=100)
+    parser.add_argument("--query-batch-size", type=int)
+    parser.add_argument("--query-train-size", type=float)
+    parser.add_argument("--query-validation-size", type=float)
+    parser.add_argument("--query-early-stopping", type=parse_bool)
+    parser.add_argument("--query-early-stopping-patience", type=int)
+    parser.add_argument("--query-check-val-every-n-epoch", type=int, default=10)
+    parser.add_argument("--query-plan-weight-decay", type=float, default=0.0)
+    parser.add_argument("--training-config")
     parser.add_argument("--output", required=True)
     return parser.parse_args()
+
+
+def parse_bool(value: str | bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Expected a boolean value, got {value!r}")
+
+
+def add_if_set(target: dict, key: str, value):
+    if value is not None and value != "":
+        target[key] = value
+
+
+def validate_single_value_config(section: str, values: dict, allowed_keys: set[str]):
+    unknown = sorted(set(values) - allowed_keys)
+    if unknown:
+        raise ValueError(f"Unsupported {section} keys in --training-config: {', '.join(unknown)}")
+    for key, value in values.items():
+        if isinstance(value, (list, tuple, set)):
+            raise ValueError(
+                f"{section}.{key} must be a single value, not a list/tuple/set sweep. "
+                "Use one value per parameter for nf-autoannotate."
+            )
+        if isinstance(value, dict):
+            raise ValueError(f"{section}.{key} must be a single value, not a nested dictionary")
+
+
+def query_train_input_from_args(args: argparse.Namespace) -> dict:
+    query_train_input = {
+        "max_epochs": args.query_max_epochs,
+        "plan_kwargs": {"weight_decay": args.query_plan_weight_decay},
+        "check_val_every_n_epoch": args.query_check_val_every_n_epoch,
+    }
+    add_if_set(query_train_input, "batch_size", args.query_batch_size)
+    add_if_set(query_train_input, "train_size", args.query_train_size)
+    add_if_set(query_train_input, "validation_size", args.query_validation_size)
+    add_if_set(query_train_input, "early_stopping", args.query_early_stopping)
+    add_if_set(query_train_input, "early_stopping_patience", args.query_early_stopping_patience)
+    return query_train_input
+
+
+def load_query_train_input(path: str | None, args: argparse.Namespace) -> dict:
+    if not path:
+        return query_train_input_from_args(args)
+
+    namespace = runpy.run_path(path)
+    query_train_input = dict(namespace.get("query_train_input", {}))
+    allowed_keys = {
+        "max_epochs",
+        "accelerator",
+        "devices",
+        "train_size",
+        "validation_size",
+        "batch_size",
+        "early_stopping",
+        "early_stopping_patience",
+        "check_val_every_n_epoch",
+        "plan_weight_decay",
+    }
+    validate_single_value_config("query_train_input", query_train_input, allowed_keys)
+    if "plan_weight_decay" in query_train_input:
+        query_train_input["plan_kwargs"] = {"weight_decay": query_train_input.pop("plan_weight_decay")}
+    if query_train_input:
+        return query_train_input
+    return query_train_input_from_args(
+        argparse.Namespace(
+            query_max_epochs=100,
+            query_batch_size=None,
+            query_train_size=None,
+            query_validation_size=None,
+            query_early_stopping=None,
+            query_early_stopping_patience=None,
+            query_check_val_every_n_epoch=10,
+            query_plan_weight_decay=0.0,
+        )
+    )
 
 
 def align_adata_to_gene_list(adata: ad.AnnData, genes: list[str]) -> ad.AnnData:
@@ -83,11 +173,7 @@ def main():
     if metadata.get("inference_mode") == "query_mapping":
         SCANVI.prepare_query_anndata(query, args.model_dir)
         scanvi = SCANVI.load_query_data(query, args.model_dir)
-        scanvi.train(
-            max_epochs=args.query_max_epochs,
-            plan_kwargs=dict(weight_decay=0.0),
-            check_val_every_n_epoch=10,
-        )
+        scanvi.train(**load_query_train_input(args.training_config, args))
         active_query = query
         labels = scanvi.predict()
         soft = scanvi.predict(soft=True)

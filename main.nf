@@ -8,6 +8,8 @@ def scanviMode = params.scanvi_model_dir ? 'pretrained' : 'train'
 def refH5ad = file(params.ref_h5ad, checkIfExists: true)
 def queryH5ad = file(params.query_h5ad, checkIfExists: true)
 def scviReferenceModelDir = params.scvi_reference_model_dir ? file(params.scvi_reference_model_dir, checkIfExists: true) : null
+def scviTrainingConfig = params.scvi_training_config ? file(params.scvi_training_config, checkIfExists: true) : null
+def useScviTrainingConfig = params.scvi_training_config ? true : false
 def outputDir = params.outdir?.toString()?.trim() ?: "autoannotate-results-${params.project_tag}"
 def refFilterCol = params.ref_filter_col
 def refFilterValues = params.ref_filter_values
@@ -52,8 +54,9 @@ process VALIDATE_INPUTS {
         --ref-h5ad ${ref_h5ad} \
         --query-h5ad ${query_h5ad} \
         --ref-label-col '${params.ref_label_col}' \
-        ${params.batch_key ? "--batch-key '${params.batch_key}'" : ''} \
-        ${params.scanvi_categorical_covariate_keys ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
+        ${(!useScviTrainingConfig && params.batch_key) ? "--batch-key '${params.batch_key}'" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_categorical_covariate_keys) ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_continuous_covariate_keys) ? "--continuous-covariate-keys '${params.scanvi_continuous_covariate_keys}'" : ''} \
         ${params.panhumanpy_feature_names_col ? "--panhumanpy-feature-names-col '${params.panhumanpy_feature_names_col}'" : ''} \
         ${refFilterCol ? "--ref-filter-col '${refFilterCol}'" : ''} \
         ${refFilterValues ? "--ref-filter-values '${refFilterValues}'" : ''} \
@@ -135,10 +138,32 @@ process SCANVI_TRAIN_MODEL {
         --validation-manifest ${validation_manifest} \
         --shared-genes ${shared_genes} \
         --ref-label-col '${params.ref_label_col}' \
-        ${params.batch_key ? "--batch-key '${params.batch_key}'" : ''} \
-        ${params.scanvi_categorical_covariate_keys ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
+        ${(!useScviTrainingConfig && params.batch_key) ? "--batch-key '${params.batch_key}'" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_categorical_covariate_keys) ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_continuous_covariate_keys) ? "--continuous-covariate-keys '${params.scanvi_continuous_covariate_keys}'" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_layer) ? "--layer '${params.scvi_layer}'" : ''} \
         --unknown-label '${params.unknown_label}' \
         --hvg-n-top-genes ${params.scanvi_hvg_n_top_genes} \
+        ${useScviTrainingConfig ? "--training-config ${scviTrainingConfig}" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_n_hidden != null) ? "--scvi-n-hidden ${params.scvi_n_hidden}" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_n_latent != null) ? "--scvi-n-latent ${params.scvi_n_latent}" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_n_layers != null) ? "--scvi-n-layers ${params.scvi_n_layers}" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_dropout_rate != null) ? "--scvi-dropout-rate ${params.scvi_dropout_rate}" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_dispersion) ? "--scvi-dispersion '${params.scvi_dispersion}'" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_gene_likelihood) ? "--scvi-gene-likelihood '${params.scvi_gene_likelihood}'" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_latent_distribution) ? "--scvi-latent-distribution '${params.scvi_latent_distribution}'" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_train_max_epochs != null) ? "--scvi-train-max-epochs ${params.scvi_train_max_epochs}" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_train_batch_size != null) ? "--scvi-train-batch-size ${params.scvi_train_batch_size}" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_train_train_size != null) ? "--scvi-train-train-size ${params.scvi_train_train_size}" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_train_validation_size != null) ? "--scvi-train-validation-size ${params.scvi_train_validation_size}" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_train_early_stopping != null) ? "--scvi-train-early-stopping ${params.scvi_train_early_stopping}" : ''} \
+        ${(!useScviTrainingConfig && params.scvi_train_early_stopping_patience != null) ? "--scvi-train-early-stopping-patience ${params.scvi_train_early_stopping_patience}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_train_max_epochs != null) ? "--scanvi-train-max-epochs ${params.scanvi_train_max_epochs}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_train_batch_size != null) ? "--scanvi-train-batch-size ${params.scanvi_train_batch_size}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_train_train_size != null) ? "--scanvi-train-train-size ${params.scanvi_train_train_size}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_train_validation_size != null) ? "--scanvi-train-validation-size ${params.scanvi_train_validation_size}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_train_early_stopping != null) ? "--scanvi-train-early-stopping ${params.scanvi_train_early_stopping}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_train_early_stopping_patience != null) ? "--scanvi-train-early-stopping-patience ${params.scanvi_train_early_stopping_patience}" : ''} \
         --output-model-dir scanvi_model \
         --output-metadata scanvi_model_metadata.json \
         ${params.scvi_reference_model_dir ? "--scvi-model-dir ${scviReferenceModelDir}" : ''}
@@ -164,7 +189,14 @@ process SCANVI_ANNOTATE {
         --model-dir ${scanvi_model_dir} \
         --label-column '${params.scanvi_obs_col}' \
         --score-column '${params.scanvi_score_col}' \
-        --query-max-epochs ${params.scanvi_query_max_epochs} \
+        ${useScviTrainingConfig ? "--training-config ${scviTrainingConfig}" : "--query-max-epochs ${params.scanvi_query_max_epochs}"} \
+        ${(!useScviTrainingConfig && params.scanvi_query_batch_size != null) ? "--query-batch-size ${params.scanvi_query_batch_size}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_query_train_size != null) ? "--query-train-size ${params.scanvi_query_train_size}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_query_validation_size != null) ? "--query-validation-size ${params.scanvi_query_validation_size}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_query_early_stopping != null) ? "--query-early-stopping ${params.scanvi_query_early_stopping}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_query_early_stopping_patience != null) ? "--query-early-stopping-patience ${params.scanvi_query_early_stopping_patience}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_query_check_val_every_n_epoch != null) ? "--query-check-val-every-n-epoch ${params.scanvi_query_check_val_every_n_epoch}" : ''} \
+        ${(!useScviTrainingConfig && params.scanvi_query_plan_weight_decay != null) ? "--query-plan-weight-decay ${params.scanvi_query_plan_weight_decay}" : ''} \
         --output scanvi_predictions.csv
     """
 }
