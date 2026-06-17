@@ -36,6 +36,15 @@ if( params.scanvi_hvg_n_top_genes.toInteger() < 0 ) {
 if( params.scanvi_model_dir && params.scvi_reference_model_dir ) {
     error "Use either --scanvi_model_dir for a pretrained scANVI model or --scvi_reference_model_dir to initialize scANVI training from a pretrained scVI reference model, not both"
 }
+if( params.marker_genes_n_top.toInteger() < 1 ) {
+    error "Invalid --marker_genes_n_top ${params.marker_genes_n_top}. Expected a positive integer"
+}
+if( !["wilcoxon", "t-test"].contains(params.marker_genes_method) ) {
+    error "Invalid --marker_genes_method ${params.marker_genes_method}. Expected one of: wilcoxon, t-test"
+}
+if( params.marker_dotplot_n_top.toInteger() < 1 ) {
+    error "Invalid --marker_dotplot_n_top ${params.marker_dotplot_n_top}. Expected a positive integer"
+}
 
 process VALIDATE_INPUTS {
     label 'validation'
@@ -235,6 +244,8 @@ process MERGE_ANNOTATIONS {
     output:
     path "${params.project_tag}.annotated.h5ad", emit: h5ad
     path "${params.project_tag}.cluster_annotation_summary.csv", emit: cluster_summary
+    path "${params.project_tag}.cluster_marker_genes.tsv", emit: marker_genes
+    path "${params.project_tag}.cluster_marker_dotplot.png", emit: marker_dotplot, optional: true
 
     script:
     """
@@ -249,7 +260,11 @@ process MERGE_ANNOTATIONS {
         --scanvi-score-column '${params.scanvi_score_col}' \
         ${params.compute_missing_clusters ? '--compute-missing-clusters' : ''} \
         --output ${params.project_tag}.annotated.h5ad \
-        --cluster-summary-output ${params.project_tag}.cluster_annotation_summary.csv
+        --cluster-summary-output ${params.project_tag}.cluster_annotation_summary.csv \
+        --marker-genes-output ${params.project_tag}.cluster_marker_genes.tsv \
+        --marker-genes-n-top ${params.marker_genes_n_top} \
+        --marker-genes-method ${params.marker_genes_method} \
+        ${params.marker_dotplot ? "--marker-dotplot-output ${params.project_tag}.cluster_marker_dotplot.png --marker-dotplot-n-top ${params.marker_dotplot_n_top}" : ""}
     """
 }
 
