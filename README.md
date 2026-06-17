@@ -129,7 +129,7 @@ Published files:
 - `<project_tag>.annotated.h5ad`
 - `<project_tag>.cluster_annotation_summary.csv`
 
-The annotated `.h5ad` is the query object with additional `obs` columns.
+The annotated `.h5ad` is the query object with additional `obs` columns and scANVI latent representations in `obsm`.
 
 Method columns copied into `query.obs`:
 
@@ -143,6 +143,13 @@ Method columns copied into `query.obs`:
 - `panhumanpy_final_level_label`: PanHumanPy final selected label.
 - `panhumanpy_confidence`: PanHumanPy final-level softmax probability.
 - `panhumanpy_azimuth_broad`, `panhumanpy_azimuth_medium`, `panhumanpy_azimuth_fine`: refined PanHumanPy labels when returned.
+
+Latent representations copied into `query.obsm`:
+
+- `X_scanvi`: latent representation returned by `scvi-tools` `SCANVI.get_latent_representation` during query annotation.
+- `X_scvi`: compatibility alias of the same scANVI latent representation for downstream tools that expect the scVI-style key.
+
+The latent arrays are written by `annotate_scanvi.py` to a separate `scanvi_latent.h5ad` artifact and merged into the final annotated `.h5ad`; the `scanvi_predictions.csv` table stays limited to per-cell labels and confidence scores.
 
 Comparison columns created in `query.obs`:
 
@@ -174,6 +181,7 @@ Intermediate files remain in Nextflow work directories, including:
 - `scanvi_model/`
 - `scanvi_model_metadata.json`
 - `scanvi_predictions.csv`
+- `scanvi_latent.h5ad`
 - `panhumanpy_predictions.csv`
 
 Nextflow timeline, report, and trace files are written under `autoannotate-reports-<project_tag>/`.

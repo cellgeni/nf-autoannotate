@@ -180,6 +180,7 @@ process SCANVI_ANNOTATE {
 
     output:
     path 'scanvi_predictions.csv', emit: predictions
+    path 'scanvi_latent.h5ad', emit: latent
 
     script:
     """
@@ -197,7 +198,8 @@ process SCANVI_ANNOTATE {
         ${(!useScviTrainingConfig && params.scanvi_query_early_stopping_patience != null) ? "--query-early-stopping-patience ${params.scanvi_query_early_stopping_patience}" : ''} \
         ${(!useScviTrainingConfig && params.scanvi_query_check_val_every_n_epoch != null) ? "--query-check-val-every-n-epoch ${params.scanvi_query_check_val_every_n_epoch}" : ''} \
         ${(!useScviTrainingConfig && params.scanvi_query_plan_weight_decay != null) ? "--query-plan-weight-decay ${params.scanvi_query_plan_weight_decay}" : ''} \
-        --output scanvi_predictions.csv
+        --output scanvi_predictions.csv \
+        --latent-output scanvi_latent.h5ad
     """
 }
 
@@ -227,6 +229,7 @@ process MERGE_ANNOTATIONS {
     path query_h5ad
     path celltypist_csv
     path scanvi_csv
+    path scanvi_latent_h5ad
     path panhumanpy_csv
 
     output:
@@ -239,6 +242,7 @@ process MERGE_ANNOTATIONS {
         --query-h5ad ${query_h5ad} \
         --celltypist-csv ${celltypist_csv} \
         --scanvi-csv ${scanvi_csv} \
+        --scanvi-latent-h5ad ${scanvi_latent_h5ad} \
         --panhumanpy-csv ${panhumanpy_csv} \
         --cluster-column '${params.query_cluster_col}' \
         --scanvi-label-column '${params.scanvi_obs_col}' \
@@ -271,8 +275,10 @@ workflow {
         : SCANVI_TRAIN_MODEL(ref_h5ad_ch, query_h5ad_ch, validation_manifest_ch, shared_genes_ch).model_dir
 
     celltypist_predictions_ch = CELLTYPIST_ANNOTATE(query_h5ad_ch, shared_genes_ch, celltypist_model_ch).predictions
-    scanvi_predictions_ch = SCANVI_ANNOTATE(query_h5ad_ch, shared_genes_ch, scanvi_model_ch).predictions
+    scanvi_annotation_outputs = SCANVI_ANNOTATE(query_h5ad_ch, shared_genes_ch, scanvi_model_ch)
+    scanvi_predictions_ch = scanvi_annotation_outputs.predictions
+    scanvi_latent_ch = scanvi_annotation_outputs.latent
     panhumanpy_predictions_ch = PANHUMANPY_ANNOTATE(query_h5ad_ch).predictions
 
-    MERGE_ANNOTATIONS(query_h5ad_ch, celltypist_predictions_ch, scanvi_predictions_ch, panhumanpy_predictions_ch)
+    MERGE_ANNOTATIONS(query_h5ad_ch, celltypist_predictions_ch, scanvi_predictions_ch, scanvi_latent_ch, panhumanpy_predictions_ch)
 }
