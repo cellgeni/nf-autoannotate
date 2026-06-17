@@ -20,6 +20,7 @@ def parse_args():
     parser.add_argument("--score-column", required=True)
     parser.add_argument("--query-max-epochs", type=int, default=100)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--latent-output", required=True)
     return parser.parse_args()
 
 
@@ -68,6 +69,35 @@ def ensure_scanvi_label_column(adata: ad.AnnData, metadata: dict) -> ad.AnnData:
     return prepared
 
 
+def write_scanvi_latent_output(
+    path: str,
+    obs_names: pd.Index,
+    latent: np.ndarray,
+    metadata: dict,
+) -> None:
+    latent = np.asarray(latent)
+    if latent.ndim != 2:
+        raise ValueError(f"Expected two-dimensional latent representation, got shape {latent.shape}")
+    if latent.shape[0] != len(obs_names):
+        raise ValueError(
+            "Latent representation row count does not match query cells: "
+            f"{latent.shape[0]} latent rows for {len(obs_names)} query cells"
+        )
+
+    output = ad.AnnData(obs=pd.DataFrame(index=obs_names.copy()))
+    output.obsm["X_scanvi"] = latent
+    # scANVI uses the same latent-variable model family as scVI. Keep an
+    # explicit compatibility key for downstream tools that look for X_scvi.
+    output.obsm["X_scvi"] = latent.copy()
+    output.uns["scanvi_latent"] = {
+        "obsm_keys": ["X_scanvi", "X_scvi"],
+        "source": "scvi-tools SCANVI.get_latent_representation",
+        "inference_mode": metadata.get("inference_mode"),
+        "x_scvi_note": "Compatibility alias of X_scanvi from the annotated scANVI model.",
+    }
+    output.write_h5ad(path)
+
+
 def main():
     args = parse_args()
 
@@ -91,6 +121,7 @@ def main():
         active_query = query
         labels = scanvi.predict()
         soft = scanvi.predict(soft=True)
+        latent = scanvi.get_latent_representation()
     else:
         model_genes = load_gene_list(args.model_dir, args.shared_genes)
         active_query = align_adata_to_gene_list(query, model_genes)
@@ -98,6 +129,7 @@ def main():
         scanvi = SCANVI.load(args.model_dir, adata=active_query)
         labels = scanvi.predict(active_query)
         soft = scanvi.predict(active_query, soft=True)
+        latent = scanvi.get_latent_representation(active_query)
 
     if isinstance(soft, pd.DataFrame):
         scores = soft.max(axis=1).to_numpy()
@@ -112,6 +144,7 @@ def main():
         }
     )
     output.to_csv(args.output, index=False)
+    write_scanvi_latent_output(args.latent_output, active_query.obs_names, latent, metadata)
 
 
 if __name__ == "__main__":

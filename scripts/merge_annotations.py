@@ -4,6 +4,7 @@ import argparse
 import sys
 
 import anndata as ad
+import numpy as np
 import pandas as pd
 
 
@@ -12,6 +13,7 @@ def parse_args():
     parser.add_argument("--query-h5ad", required=True)
     parser.add_argument("--celltypist-csv", required=True)
     parser.add_argument("--scanvi-csv", required=True)
+    parser.add_argument("--scanvi-latent-h5ad")
     parser.add_argument("--panhumanpy-csv", required=True)
     parser.add_argument("--cluster-column", required=True)
     parser.add_argument("--scanvi-label-column", required=True)
@@ -141,6 +143,47 @@ def require_matching_cell_ids(frame: pd.DataFrame, query_index: pd.Index, label:
         raise ValueError(f"{label} CSV cell_id values do not match query.obs_names ({'; '.join(details)})")
 
 
+def merge_scanvi_latent_obsm(query: ad.AnnData, latent_h5ad_path: str) -> None:
+    latent = ad.read_h5ad(latent_h5ad_path)
+    if not latent.obs_names.is_unique:
+        raise ValueError("scANVI latent h5ad cell indices are not unique")
+
+    query_names = query.obs_names.astype(str).to_list()
+    latent_names = latent.obs_names.astype(str).to_list()
+    if query_names != latent_names:
+        expected = set(query_names)
+        observed = set(latent_names)
+        missing = sorted(expected - observed)
+        extra = sorted(observed - expected)
+        if missing or extra:
+            details = []
+            if missing:
+                details.append(f"missing query cells: {', '.join(missing[:5])}")
+            if extra:
+                details.append(f"extra cells: {', '.join(extra[:5])}")
+            raise ValueError(
+                "scANVI latent h5ad cell indices do not match query.obs_names "
+                f"({'; '.join(details)})"
+            )
+        raise ValueError("scANVI latent h5ad cell order does not match query.obs_names")
+
+    if not latent.obsm.keys():
+        raise ValueError("scANVI latent h5ad does not contain any obsm entries")
+
+    for key in latent.obsm.keys():
+        values = np.asarray(latent.obsm[key])
+        if values.ndim != 2:
+            raise ValueError(f"scANVI latent obsm[{key!r}] is not two-dimensional")
+        if values.shape[0] != query.n_obs:
+            raise ValueError(
+                f"scANVI latent obsm[{key!r}] has {values.shape[0]} rows for {query.n_obs} query cells"
+            )
+        query.obsm[key] = values.copy()
+
+    if "scanvi_latent" in latent.uns:
+        query.uns["scanvi_latent"] = dict(latent.uns["scanvi_latent"])
+
+
 def celltypist_scanvi_agreement(merged: pd.DataFrame, scanvi_label_column: str) -> pd.Series:
     labels_present = merged["celltypist_majority_voting"].notna() & merged[scanvi_label_column].notna()
     return labels_present & merged["celltypist_majority_voting"].astype(str).eq(
@@ -208,6 +251,8 @@ def main():
     )
 
     query.obs = merged
+    if args.scanvi_latent_h5ad:
+        merge_scanvi_latent_obsm(query, args.scanvi_latent_h5ad)
     query.write_h5ad(args.output)
     cluster_summary.to_csv(args.cluster_summary_output, index=False)
 
