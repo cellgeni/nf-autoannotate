@@ -19,13 +19,45 @@ def parse_args():
     parser.add_argument("--ref-label-col", required=True)
     parser.add_argument("--batch-key")
     parser.add_argument("--categorical-covariate-keys")
+    parser.add_argument("--continuous-covariate-keys")
+    parser.add_argument("--layer")
     parser.add_argument("--unknown-label", required=True)
     parser.add_argument("--scvi-model-dir")
     parser.add_argument("--hvg-n-top-genes", type=int, default=2500)
     parser.add_argument("--training-config")
+    parser.add_argument("--scvi-n-hidden", type=int)
+    parser.add_argument("--scvi-n-latent", type=int)
+    parser.add_argument("--scvi-n-layers", type=int)
+    parser.add_argument("--scvi-dropout-rate", type=float)
+    parser.add_argument("--scvi-dispersion")
+    parser.add_argument("--scvi-gene-likelihood")
+    parser.add_argument("--scvi-latent-distribution")
+    parser.add_argument("--scvi-train-max-epochs", type=int)
+    parser.add_argument("--scvi-train-batch-size", type=int)
+    parser.add_argument("--scvi-train-train-size", type=float)
+    parser.add_argument("--scvi-train-validation-size", type=float)
+    parser.add_argument("--scvi-train-early-stopping", type=parse_bool)
+    parser.add_argument("--scvi-train-early-stopping-patience", type=int)
+    parser.add_argument("--scanvi-train-max-epochs", type=int)
+    parser.add_argument("--scanvi-train-batch-size", type=int)
+    parser.add_argument("--scanvi-train-train-size", type=float)
+    parser.add_argument("--scanvi-train-validation-size", type=float)
+    parser.add_argument("--scanvi-train-early-stopping", type=parse_bool)
+    parser.add_argument("--scanvi-train-early-stopping-patience", type=int)
     parser.add_argument("--output-model-dir", required=True)
     parser.add_argument("--output-metadata", required=True)
     return parser.parse_args()
+
+
+def parse_bool(value: str | bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Expected a boolean value, got {value}")
 
 
 def apply_reference_timepoint_filter(adata: ad.AnnData, manifest: dict) -> ad.AnnData:
@@ -126,12 +158,58 @@ def load_training_config(path: str | None) -> dict[str, dict]:
     return config
 
 
-def merge_setup_params(config_params: dict, batch_key: str | None, categorical_keys: list[str]) -> dict:
-    setup_params = dict(config_params)
-    if batch_key:
-        setup_params["batch_key"] = batch_key
+def add_if_set(target: dict, key: str, value):
+    if value is not None and value != "":
+        target[key] = value
+
+
+def training_config_from_args(args: argparse.Namespace) -> dict[str, dict]:
+    categorical_keys = parse_comma_separated(args.categorical_covariate_keys)
+    continuous_keys = parse_comma_separated(args.continuous_covariate_keys)
+
+    param_input = {}
+    add_if_set(param_input, "layer", args.layer)
+    add_if_set(param_input, "batch_key", args.batch_key)
     if categorical_keys:
-        setup_params["categorical_covariate_keys"] = categorical_keys
+        param_input["categorical_covariate_keys"] = categorical_keys
+    if continuous_keys:
+        param_input["continuous_covariate_keys"] = continuous_keys
+
+    model_input = {}
+    add_if_set(model_input, "n_hidden", args.scvi_n_hidden)
+    add_if_set(model_input, "n_latent", args.scvi_n_latent)
+    add_if_set(model_input, "n_layers", args.scvi_n_layers)
+    add_if_set(model_input, "dropout_rate", args.scvi_dropout_rate)
+    add_if_set(model_input, "dispersion", args.scvi_dispersion)
+    add_if_set(model_input, "gene_likelihood", args.scvi_gene_likelihood)
+    add_if_set(model_input, "latent_distribution", args.scvi_latent_distribution)
+
+    train_input = {}
+    add_if_set(train_input, "max_epochs", args.scvi_train_max_epochs)
+    add_if_set(train_input, "batch_size", args.scvi_train_batch_size)
+    add_if_set(train_input, "train_size", args.scvi_train_train_size)
+    add_if_set(train_input, "validation_size", args.scvi_train_validation_size)
+    add_if_set(train_input, "early_stopping", args.scvi_train_early_stopping)
+    add_if_set(train_input, "early_stopping_patience", args.scvi_train_early_stopping_patience)
+
+    scanvi_train_input = {}
+    add_if_set(scanvi_train_input, "max_epochs", args.scanvi_train_max_epochs)
+    add_if_set(scanvi_train_input, "batch_size", args.scanvi_train_batch_size)
+    add_if_set(scanvi_train_input, "train_size", args.scanvi_train_train_size)
+    add_if_set(scanvi_train_input, "validation_size", args.scanvi_train_validation_size)
+    add_if_set(scanvi_train_input, "early_stopping", args.scanvi_train_early_stopping)
+    add_if_set(scanvi_train_input, "early_stopping_patience", args.scanvi_train_early_stopping_patience)
+
+    return {
+        "model_input": model_input,
+        "param_input": param_input,
+        "train_input": train_input,
+        "scanvi_train_input": scanvi_train_input or dict(train_input),
+    }
+
+
+def normalize_setup_params(setup_params: dict) -> dict:
+    setup_params = dict(setup_params)
     if setup_params.get("categorical_covariate_keys") == []:
         setup_params["categorical_covariate_keys"] = None
     if setup_params.get("continuous_covariate_keys") == []:
@@ -161,8 +239,12 @@ def main():
     args = parse_args()
     if args.hvg_n_top_genes < 0:
         raise ValueError("--hvg-n-top-genes must be a non-negative integer")
-    training_config = load_training_config(args.training_config)
-    effective_batch_key = args.batch_key or training_config["param_input"].get("batch_key")
+    if args.training_config:
+        training_config = load_training_config(args.training_config)
+    else:
+        training_config = training_config_from_args(args)
+    setup_params = normalize_setup_params(training_config["param_input"])
+    effective_batch_key = setup_params.get("batch_key")
 
     with open(args.validation_manifest, "r", encoding="utf-8") as handle:
         manifest = json.load(handle)
@@ -202,13 +284,6 @@ def main():
         )
         combined.obs["_scanvi_label"] = combined.obs["_scanvi_label"].astype(str)
         combined = subset_to_hvgs(combined, args.hvg_n_top_genes, effective_batch_key)
-        categorical_covariate_keys = parse_comma_separated(args.categorical_covariate_keys)
-        setup_params = merge_setup_params(
-            training_config["param_input"],
-            effective_batch_key,
-            categorical_covariate_keys,
-        )
-
         SCVI.setup_anndata(combined, **setup_params)
         vae = SCVI(combined, **training_config["model_input"])
         vae.train(**training_config["train_input"])
@@ -229,7 +304,9 @@ def main():
         "ref_label_col": args.ref_label_col,
         "batch_key": effective_batch_key,
         "unknown_label": args.unknown_label,
-        "categorical_covariate_keys": parse_comma_separated(args.categorical_covariate_keys),
+        "categorical_covariate_keys": setup_params.get("categorical_covariate_keys") or [],
+        "continuous_covariate_keys": setup_params.get("continuous_covariate_keys") or [],
+        "layer": setup_params.get("layer"),
         "hvg_n_top_genes": args.hvg_n_top_genes,
         "training_config": training_config,
         "ref_timepoint_col": manifest.get("ref_timepoint_col"),

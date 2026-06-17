@@ -66,20 +66,27 @@ CellTypist model reuse checks that at least 80% of model genes are present in th
 scANVI optional controls:
 
 - `--batch_key`: optional column present in both reference and query `obs`; omitted values stay as real `None`/`null`. Use this when batches should be modeled.
-- `--scanvi_categorical_covariate_keys`: optional comma-separated additional covariate columns present in both objects.
+- `--scvi_layer`: optional AnnData layer passed to `SCVI.setup_anndata`.
+- `--scanvi_categorical_covariate_keys`: optional comma-separated additional categorical covariate columns present in both objects.
+- `--scanvi_continuous_covariate_keys`: optional comma-separated continuous covariate columns present in both objects.
 - `--scanvi_hvg_n_top_genes`: HVGs for new scVI/scANVI training. Set `0` to keep all shared genes. Default: `2500`.
-- `--scvi_training_config`: optional Python config file for single-value scVI/scANVI training parameters. See [examples/scvi_training_config.py](examples/scvi_training_config.py).
-- `--scanvi_query_max_epochs`: max epochs for query mapping from a pretrained scVI reference model. Default: `100`.
+- `--scvi_n_hidden`, `--scvi_n_latent`, `--scvi_n_layers`, `--scvi_dropout_rate`: optional scVI architecture controls. Unset values use scvi-tools defaults.
+- `--scvi_dispersion`, `--scvi_gene_likelihood`, `--scvi_latent_distribution`: optional scVI model distribution controls.
+- `--scvi_train_max_epochs`, `--scvi_train_batch_size`, `--scvi_train_train_size`, `--scvi_train_validation_size`, `--scvi_train_early_stopping`, `--scvi_train_early_stopping_patience`: optional `SCVI.train` controls.
+- `--scanvi_train_max_epochs`, `--scanvi_train_batch_size`, `--scanvi_train_train_size`, `--scanvi_train_validation_size`, `--scanvi_train_early_stopping`, `--scanvi_train_early_stopping_patience`: optional reference `SCANVI.train` controls.
+- `--scanvi_query_max_epochs`, `--scanvi_query_batch_size`, `--scanvi_query_train_size`, `--scanvi_query_validation_size`, `--scanvi_query_early_stopping`, `--scanvi_query_early_stopping_patience`, `--scanvi_query_check_val_every_n_epoch`, `--scanvi_query_plan_weight_decay`: optional query-mapping `SCANVI.train` controls. `--scanvi_query_max_epochs` defaults to `100`; the other values preserve current script defaults when unset.
+- `--scvi_training_config`: optional Python config file for single-value scVI/scANVI training parameters. See [examples/scvi_training_config.py](examples/scvi_training_config.py). When provided, it takes precedence over the individual scVI/scANVI Nextflow params above.
 - `--unknown_label`: unlabeled query category for scANVI training. Default: `Unknown`.
 
 `--scvi_training_config` accepts dictionaries similar to `nf-scVI-metrics/examples/inputs.py`, but each model and training parameter must contain one value rather than a list of sweep values. Supported sections are:
 
-- `param_input`: passed to `SCVI.setup_anndata`, with `layer`, `batch_key`, `categorical_covariate_keys`, and `continuous_covariate_keys`. Existing CLI values for `--batch_key` and `--scanvi_categorical_covariate_keys` override matching config keys when supplied.
+- `param_input`: passed to `SCVI.setup_anndata`, with `layer`, `batch_key`, `categorical_covariate_keys`, and `continuous_covariate_keys`.
 - `model_input`: passed to `scvi.model.SCVI`, including bounded architecture options such as `n_hidden`, `n_latent`, `n_layers`, `dropout_rate`, `dispersion`, `gene_likelihood`, and `latent_distribution`.
 - `train_input`: passed to the initial `SCVI.train` call.
-- `scanvi_train_input`: optionally passed to `SCANVI.train`; if omitted, `train_input` is reused for scANVI training.
+- `scanvi_train_input`: optionally passed to reference `SCANVI.train`; if omitted, `train_input` is reused for scANVI training.
+- `query_train_input`: optionally passed to query-mapping `SCANVI.train`; use `plan_weight_decay` for the query-training weight decay value. If omitted, the current query-training defaults are used.
 
-Lists are accepted only for covariate-key fields because those are single parameter values in scvi-tools. Sweep-style entries such as `n_layers = [1, 2]` are rejected.
+When `--scvi_training_config` is supplied, individual Nextflow params for setup/model/train/query-train settings are intentionally ignored so the config file is the single source of truth. Lists are accepted only for covariate-key fields because those are single parameter values in scvi-tools. Sweep-style entries such as `n_layers = [1, 2]` are rejected.
 
 PanHumanPy optional controls:
 

@@ -32,3 +32,13 @@ scanvi_train_input = {
     "early_stopping": True,
     "early_stopping_patience": 10,
 }
+
+# Optional parameters for SCANVI.train during query mapping.
+query_train_input = {
+    "max_epochs": 100,
+    "batch_size": 512,
+    "early_stopping": True,
+    "early_stopping_patience": 10,
+    "check_val_every_n_epoch": 10,
+    "plan_weight_decay": 0.0,
+}
