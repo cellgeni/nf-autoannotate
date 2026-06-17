@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from pathlib import Path
 
 import anndata as ad
 import pandas as pd
@@ -33,6 +34,8 @@ def parse_args():
     parser.add_argument("--marker-genes-output", required=True)
     parser.add_argument("--marker-genes-n-top", type=int, default=50)
     parser.add_argument("--marker-genes-method", choices=("t-test", "wilcoxon"), default="wilcoxon")
+    parser.add_argument("--marker-dotplot-output")
+    parser.add_argument("--marker-dotplot-n-top", type=int, default=5)
     return parser.parse_args()
 
 
@@ -83,18 +86,18 @@ def empty_marker_gene_table() -> pd.DataFrame:
     return pd.DataFrame(columns=MARKER_GENE_COLUMNS)
 
 
-def build_marker_gene_table(
+def build_marker_genes(
     query: ad.AnnData,
     cluster_column: str,
     n_top: int,
     method: str,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, ad.AnnData | None]:
     if n_top < 1:
         raise ValueError("--marker-genes-n-top must be at least 1")
 
     clusters = query.obs[cluster_column].astype("string").fillna("NA")
     if clusters.nunique(dropna=False) < 2:
-        return empty_marker_gene_table()
+        return empty_marker_gene_table(), None
 
     import scanpy as sc
 
@@ -123,7 +126,51 @@ def build_marker_gene_table(
     )
     marker_genes["cluster"] = marker_genes["cluster"].astype(str)
     marker_genes["rank"] = marker_genes.groupby("cluster", sort=False).cumcount() + 1
-    return marker_genes[MARKER_GENE_COLUMNS]
+    return marker_genes[MARKER_GENE_COLUMNS], marker_data
+
+
+def write_marker_dotplot(
+    marker_data: ad.AnnData | None,
+    marker_genes: pd.DataFrame,
+    cluster_column: str,
+    output_path: str | None,
+    n_top: int,
+) -> None:
+    if not output_path:
+        return
+    if n_top < 1:
+        raise ValueError("--marker-dotplot-n-top must be at least 1")
+    if marker_data is None or marker_genes.empty:
+        print("Skipping marker dotplot because fewer than two clusters were available.", file=sys.stderr)
+        return
+
+    marker_genes_for_plot = marker_genes.loc[marker_genes["rank"] <= n_top]
+    markers_by_cluster = {
+        str(cluster): cluster_markers["gene"].dropna().astype(str).drop_duplicates().tolist()
+        for cluster, cluster_markers in marker_genes_for_plot.groupby("cluster", sort=False)
+    }
+    markers_by_cluster = {cluster: genes for cluster, genes in markers_by_cluster.items() if genes}
+    if not markers_by_cluster:
+        print("Skipping marker dotplot because no marker genes were available.", file=sys.stderr)
+        return
+
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import scanpy as sc
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    dotplot = sc.pl.dotplot(
+        marker_data,
+        var_names=markers_by_cluster,
+        groupby=cluster_column,
+        use_raw=False,
+        standard_scale="var",
+        show=False,
+        return_fig=True,
+    )
+    dotplot.savefig(output)
 
 
 def ensure_cluster_column(query: ad.AnnData, cluster_column: str, compute_missing_clusters: bool) -> None:
@@ -259,7 +306,7 @@ def main():
     merged["celltypist_scanvi_agree"] = celltypist_scanvi_agreement(merged, args.scanvi_label_column)
 
     cluster_summary = build_cluster_summary(merged, args.cluster_column, args.scanvi_label_column)
-    marker_genes = build_marker_gene_table(
+    marker_genes, marker_data = build_marker_genes(
         query,
         args.cluster_column,
         args.marker_genes_n_top,
@@ -278,6 +325,13 @@ def main():
     query.write_h5ad(args.output)
     cluster_summary.to_csv(args.cluster_summary_output, index=False)
     marker_genes.to_csv(args.marker_genes_output, sep="\t", index=False)
+    write_marker_dotplot(
+        marker_data,
+        marker_genes,
+        args.cluster_column,
+        args.marker_dotplot_output,
+        args.marker_dotplot_n_top,
+    )
 
 
 if __name__ == "__main__":

@@ -84,6 +84,8 @@ Output naming and merge behavior:
 - `--compute_missing_clusters`: compute Leiden clusters in the merge step if `--query_cluster_col` is absent. Default: `false`.
 - `--marker_genes_n_top`: number of marker genes to report per cluster. Default: `50`.
 - `--marker_genes_method`: differential-expression test for marker ranking, either `wilcoxon` or `t-test`. Default: `wilcoxon`.
+- `--marker_dotplot`: write a marker-gene dotplot PNG from the ranked marker table. Default: `true`.
+- `--marker_dotplot_n_top`: number of ranked marker genes per cluster to include in the dotplot. Default: `5`.
 
 When missing clusters are explicitly computed, the merge step reuses existing neighbors or `X_pca` if present. Otherwise it runs PCA/neighbors/Leiden on a normalized, log-transformed copy so the final query matrix is not modified.
 
@@ -113,6 +115,7 @@ Published files:
 - `<project_tag>.annotated.h5ad`
 - `<project_tag>.cluster_annotation_summary.csv`
 - `<project_tag>.cluster_marker_genes.tsv`
+- `<project_tag>.cluster_marker_dotplot.png` when `--marker_dotplot true` and at least two clusters are available
 
 The annotated `.h5ad` is the query object with additional `obs` columns.
 
@@ -159,7 +162,9 @@ The marker-gene table is grouped by `--query_cluster_col` and written to `<proje
 - `p_value`: nominal p-value.
 - `p_value_adj`: adjusted p-value.
 
-If the query contains fewer than two clusters, the marker-gene TSV is still written with headers but no marker rows because there is no between-cluster comparison.
+If the query contains fewer than two clusters, the marker-gene TSV is still written with headers but no marker rows because there is no between-cluster comparison. The marker dotplot is skipped in that case.
+
+When `--marker_dotplot true`, the merge step writes `<project_tag>.cluster_marker_dotplot.png` with Scanpy `dotplot` using the top `--marker_dotplot_n_top` ranked genes per cluster from the same marker calculation. Set `--marker_dotplot false` to skip the PNG output while keeping the marker-gene TSV unchanged.
 
 Intermediate files remain in Nextflow work directories, including:
 
