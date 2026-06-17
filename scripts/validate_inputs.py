@@ -18,8 +18,6 @@ def parse_args():
     parser.add_argument("--panhumanpy-feature-names-col")
     parser.add_argument("--ref-filter-col")
     parser.add_argument("--ref-filter-values")
-    parser.add_argument("--ref-timepoint-col", dest="deprecated_ref_timepoint_col")
-    parser.add_argument("--ref-timepoints", dest="deprecated_ref_timepoints")
     parser.add_argument("--output", required=True)
     parser.add_argument("--shared-genes-output", required=True)
     return parser.parse_args()
@@ -71,19 +69,8 @@ def parse_comma_separated(raw_values: str | None) -> list[str]:
 
 
 def resolve_reference_filter(args: argparse.Namespace) -> tuple[str | None, list[str]]:
-    if args.ref_filter_col and args.deprecated_ref_timepoint_col and (
-        args.ref_filter_col != args.deprecated_ref_timepoint_col
-    ):
-        raise ValueError("Use either --ref-filter-col or deprecated --ref-timepoint-col, not both with different values")
-    if args.ref_filter_values and args.deprecated_ref_timepoints and (
-        args.ref_filter_values != args.deprecated_ref_timepoints
-    ):
-        raise ValueError(
-            "Use either --ref-filter-values or deprecated --ref-timepoints, not both with different values"
-        )
-
-    filter_col = args.ref_filter_col or args.deprecated_ref_timepoint_col
-    filter_values = parse_filter_values(args.ref_filter_values or args.deprecated_ref_timepoints)
+    filter_col = args.ref_filter_col
+    filter_values = parse_filter_values(args.ref_filter_values)
     if (filter_col and not filter_values) or (not filter_col and filter_values):
         raise ValueError("Both --ref-filter-col and --ref-filter-values are required together")
     return filter_col, filter_values

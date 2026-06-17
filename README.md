@@ -38,7 +38,6 @@ Optional reference filtering:
 
 `--ref_filter_col` and `--ref_filter_values` must be supplied together.
 
-Deprecated aliases: `--ref_timepoint_col` and `--ref_timepoints` are still accepted for compatibility, but new runs should use `--ref_filter_col` and `--ref_filter_values`. Validation manifests and model metadata now use `ref_filter_col` and `ref_filter_values`.
 
 ## Tool-Specific Parameters
 

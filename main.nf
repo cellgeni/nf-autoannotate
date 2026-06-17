@@ -9,26 +9,21 @@ def refH5ad = file(params.ref_h5ad, checkIfExists: true)
 def queryH5ad = file(params.query_h5ad, checkIfExists: true)
 def scviReferenceModelDir = params.scvi_reference_model_dir ? file(params.scvi_reference_model_dir, checkIfExists: true) : null
 def outputDir = params.outdir?.toString()?.trim() ?: "autoannotate-results-${params.project_tag}"
-def refFilterCol = params.ref_filter_col ?: params.ref_timepoint_col
-def refFilterValues = params.ref_filter_values ?: params.ref_timepoints
+def refFilterCol = params.ref_filter_col
+def refFilterValues = params.ref_filter_values
+def unsupportedFilterParams = ["ref_timepoint_col", "ref_timepoints"].findAll { params.containsKey(it) }
 
+if( unsupportedFilterParams ) {
+    error "Unsupported parameter(s): ${unsupportedFilterParams.collect { "--${it}" }.join(", ")}. Use --ref_filter_col and --ref_filter_values instead."
+}
 if( !params.project_tag ) {
     error "Missing required parameter: --project_tag"
 }
 if( !params.ref_label_col ) {
     error "Missing required parameter: --ref_label_col"
 }
-if( params.ref_filter_col && params.ref_timepoint_col && params.ref_filter_col != params.ref_timepoint_col ) {
-    error "Use either --ref_filter_col or deprecated --ref_timepoint_col, not both with different values"
-}
-if( params.ref_filter_values && params.ref_timepoints && params.ref_filter_values != params.ref_timepoints ) {
-    error "Use either --ref_filter_values or deprecated --ref_timepoints, not both with different values"
-}
 if( (refFilterCol && !refFilterValues) || (!refFilterCol && refFilterValues) ) {
     error "Use --ref_filter_col and --ref_filter_values together when filtering the reference"
-}
-if( params.ref_timepoint_col || params.ref_timepoints ) {
-    log.warn "Parameters --ref_timepoint_col and --ref_timepoints are deprecated; use --ref_filter_col and --ref_filter_values instead."
 }
 if( !['standard', 'detailed'].contains(params.celltypist_training_mode) ) {
     error "Invalid --celltypist_training_mode '${params.celltypist_training_mode}'. Expected one of: standard, detailed"

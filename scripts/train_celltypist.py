@@ -69,8 +69,8 @@ def select_features(
 
 
 def apply_reference_filter(adata: sc.AnnData, manifest: dict) -> sc.AnnData:
-    filter_col = manifest.get("ref_filter_col") or manifest.get("ref_timepoint_col")
-    filter_values = manifest.get("ref_filter_values") or manifest.get("ref_timepoints") or []
+    filter_col = manifest.get("ref_filter_col")
+    filter_values = manifest.get("ref_filter_values") or []
     if not filter_col or not filter_values:
         return adata
     mask = adata.obs[filter_col].astype(str).isin(filter_values)
@@ -135,8 +135,8 @@ def main():
     metadata = {
         "ref_label_col": args.ref_label_col,
         "training_mode": args.training_mode,
-        "ref_filter_col": manifest.get("ref_filter_col") or manifest.get("ref_timepoint_col"),
-        "ref_filter_values": manifest.get("ref_filter_values") or manifest.get("ref_timepoints", []),
+        "ref_filter_col": manifest.get("ref_filter_col"),
+        "ref_filter_values": manifest.get("ref_filter_values", []),
         "shared_gene_count": len(shared_genes),
         "balanced_cell_count": balanced_cell_count,
         "feature_selection": feature_selection_used,

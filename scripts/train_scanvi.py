@@ -27,8 +27,8 @@ def parse_args():
 
 
 def apply_reference_filter(adata: ad.AnnData, manifest: dict) -> ad.AnnData:
-    filter_col = manifest.get("ref_filter_col") or manifest.get("ref_timepoint_col")
-    filter_values = manifest.get("ref_filter_values") or manifest.get("ref_timepoints") or []
+    filter_col = manifest.get("ref_filter_col")
+    filter_values = manifest.get("ref_filter_values") or []
     if not filter_col or not filter_values:
         return adata
     mask = adata.obs[filter_col].astype(str).isin(filter_values)
@@ -138,8 +138,8 @@ def main():
         "unknown_label": args.unknown_label,
         "categorical_covariate_keys": parse_comma_separated(args.categorical_covariate_keys),
         "hvg_n_top_genes": args.hvg_n_top_genes,
-        "ref_filter_col": manifest.get("ref_filter_col") or manifest.get("ref_timepoint_col"),
-        "ref_filter_values": manifest.get("ref_filter_values") or manifest.get("ref_timepoints", []),
+        "ref_filter_col": manifest.get("ref_filter_col"),
+        "ref_filter_values": manifest.get("ref_filter_values", []),
         "scvi_model_dir": args.scvi_model_dir,
         "inference_mode": inference_mode,
         "genes": genes,
