@@ -8,6 +8,7 @@ def scanviMode = params.scanvi_model_dir ? 'pretrained' : 'train'
 def refH5ad = file(params.ref_h5ad, checkIfExists: true)
 def queryH5ad = file(params.query_h5ad, checkIfExists: true)
 def scviReferenceModelDir = params.scvi_reference_model_dir ? file(params.scvi_reference_model_dir, checkIfExists: true) : null
+def scviTrainingConfig = params.scvi_training_config ? file(params.scvi_training_config, checkIfExists: true) : null
 def outputDir = params.outdir?.toString()?.trim() ?: "autoannotate-results-${params.project_tag}"
 
 if( !params.project_tag ) {
@@ -133,6 +134,7 @@ process SCANVI_TRAIN_MODEL {
         ${params.scanvi_categorical_covariate_keys ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
         --unknown-label '${params.unknown_label}' \
         --hvg-n-top-genes ${params.scanvi_hvg_n_top_genes} \
+        ${params.scvi_training_config ? "--training-config ${scviTrainingConfig}" : ''} \
         --output-model-dir scanvi_model \
         --output-metadata scanvi_model_metadata.json \
         ${params.scvi_reference_model_dir ? "--scvi-model-dir ${scviReferenceModelDir}" : ''}

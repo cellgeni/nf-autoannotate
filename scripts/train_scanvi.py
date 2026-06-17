@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import runpy
 
 import anndata as ad
 import pandas as pd
@@ -21,6 +22,7 @@ def parse_args():
     parser.add_argument("--unknown-label", required=True)
     parser.add_argument("--scvi-model-dir")
     parser.add_argument("--hvg-n-top-genes", type=int, default=2500)
+    parser.add_argument("--training-config")
     parser.add_argument("--output-model-dir", required=True)
     parser.add_argument("--output-metadata", required=True)
     return parser.parse_args()
@@ -49,6 +51,94 @@ def parse_comma_separated(raw_values: str | None) -> list[str]:
     return [value.strip() for value in raw_values.split(",") if value.strip()]
 
 
+def load_training_config(path: str | None) -> dict[str, dict]:
+    if not path:
+        return {
+            "model_input": {},
+            "param_input": {},
+            "train_input": {},
+            "scanvi_train_input": {},
+        }
+
+    namespace = runpy.run_path(path)
+    config = {
+        "model_input": dict(namespace.get("model_input", {})),
+        "param_input": dict(namespace.get("param_input", {})),
+        "train_input": dict(namespace.get("train_input", {})),
+        "scanvi_train_input": dict(namespace.get("scanvi_train_input", namespace.get("train_input", {}))),
+    }
+
+    allowed_keys = {
+        "model_input": {
+            "n_hidden",
+            "n_latent",
+            "n_layers",
+            "dropout_rate",
+            "dispersion",
+            "gene_likelihood",
+            "latent_distribution",
+        },
+        "param_input": {
+            "layer",
+            "batch_key",
+            "categorical_covariate_keys",
+            "continuous_covariate_keys",
+        },
+        "train_input": {
+            "max_epochs",
+            "accelerator",
+            "devices",
+            "train_size",
+            "validation_size",
+            "batch_size",
+            "early_stopping",
+            "early_stopping_patience",
+        },
+        "scanvi_train_input": {
+            "max_epochs",
+            "accelerator",
+            "devices",
+            "train_size",
+            "validation_size",
+            "batch_size",
+            "early_stopping",
+            "early_stopping_patience",
+        },
+    }
+    list_allowed = {
+        ("param_input", "categorical_covariate_keys"),
+        ("param_input", "continuous_covariate_keys"),
+    }
+
+    for section, values in config.items():
+        unknown = sorted(set(values) - allowed_keys[section])
+        if unknown:
+            raise ValueError(f"Unsupported {section} keys in --training-config: {', '.join(unknown)}")
+        for key, value in values.items():
+            if isinstance(value, (list, tuple, set)) and (section, key) not in list_allowed:
+                raise ValueError(
+                    f"{section}.{key} must be a single value, not a list/tuple/set sweep. "
+                    "Use one value per parameter for nf-autoannotate."
+                )
+            if isinstance(value, dict):
+                raise ValueError(f"{section}.{key} must be a single value, not a nested dictionary")
+
+    return config
+
+
+def merge_setup_params(config_params: dict, batch_key: str | None, categorical_keys: list[str]) -> dict:
+    setup_params = dict(config_params)
+    if batch_key:
+        setup_params["batch_key"] = batch_key
+    if categorical_keys:
+        setup_params["categorical_covariate_keys"] = categorical_keys
+    if setup_params.get("categorical_covariate_keys") == []:
+        setup_params["categorical_covariate_keys"] = None
+    if setup_params.get("continuous_covariate_keys") == []:
+        setup_params["continuous_covariate_keys"] = None
+    return setup_params
+
+
 def subset_to_hvgs(adata: ad.AnnData, n_top_genes: int, batch_key: str | None) -> ad.AnnData:
     if n_top_genes <= 0 or adata.n_vars <= n_top_genes:
         return adata
@@ -71,6 +161,8 @@ def main():
     args = parse_args()
     if args.hvg_n_top_genes < 0:
         raise ValueError("--hvg-n-top-genes must be a non-negative integer")
+    training_config = load_training_config(args.training_config)
+    effective_batch_key = args.batch_key or training_config["param_input"].get("batch_key")
 
     with open(args.validation_manifest, "r", encoding="utf-8") as handle:
         manifest = json.load(handle)
@@ -90,7 +182,7 @@ def main():
             labels_key="_scanvi_label",
             unlabeled_category=args.unknown_label,
         )
-        scanvi.train()
+        scanvi.train(**training_config["scanvi_train_input"])
         genes = ref.var_names.tolist()
         inference_mode = "query_mapping"
     else:
@@ -109,16 +201,17 @@ def main():
             merge="same",
         )
         combined.obs["_scanvi_label"] = combined.obs["_scanvi_label"].astype(str)
-        combined = subset_to_hvgs(combined, args.hvg_n_top_genes, args.batch_key)
+        combined = subset_to_hvgs(combined, args.hvg_n_top_genes, effective_batch_key)
         categorical_covariate_keys = parse_comma_separated(args.categorical_covariate_keys)
-
-        SCVI.setup_anndata(
-            combined,
-            batch_key=args.batch_key,
-            categorical_covariate_keys=categorical_covariate_keys or None,
+        setup_params = merge_setup_params(
+            training_config["param_input"],
+            effective_batch_key,
+            categorical_covariate_keys,
         )
-        vae = SCVI(combined)
-        vae.train()
+
+        SCVI.setup_anndata(combined, **setup_params)
+        vae = SCVI(combined, **training_config["model_input"])
+        vae.train(**training_config["train_input"])
 
         scanvi = SCANVI.from_scvi_model(
             vae,
@@ -126,7 +219,7 @@ def main():
             labels_key="_scanvi_label",
             unlabeled_category=args.unknown_label,
         )
-        scanvi.train()
+        scanvi.train(**training_config["scanvi_train_input"])
         genes = combined.var_names.tolist()
         inference_mode = "direct_load"
 
@@ -134,10 +227,11 @@ def main():
 
     metadata = {
         "ref_label_col": args.ref_label_col,
-        "batch_key": args.batch_key,
+        "batch_key": effective_batch_key,
         "unknown_label": args.unknown_label,
         "categorical_covariate_keys": parse_comma_separated(args.categorical_covariate_keys),
         "hvg_n_top_genes": args.hvg_n_top_genes,
+        "training_config": training_config,
         "ref_timepoint_col": manifest.get("ref_timepoint_col"),
         "ref_timepoints": manifest.get("ref_timepoints", []),
         "scvi_model_dir": args.scvi_model_dir,

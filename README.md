@@ -68,8 +68,18 @@ scANVI optional controls:
 - `--batch_key`: optional column present in both reference and query `obs`; omitted values stay as real `None`/`null`. Use this when batches should be modeled.
 - `--scanvi_categorical_covariate_keys`: optional comma-separated additional covariate columns present in both objects.
 - `--scanvi_hvg_n_top_genes`: HVGs for new scVI/scANVI training. Set `0` to keep all shared genes. Default: `2500`.
+- `--scvi_training_config`: optional Python config file for single-value scVI/scANVI training parameters. See [examples/scvi_training_config.py](examples/scvi_training_config.py).
 - `--scanvi_query_max_epochs`: max epochs for query mapping from a pretrained scVI reference model. Default: `100`.
 - `--unknown_label`: unlabeled query category for scANVI training. Default: `Unknown`.
+
+`--scvi_training_config` accepts dictionaries similar to `nf-scVI-metrics/examples/inputs.py`, but each model and training parameter must contain one value rather than a list of sweep values. Supported sections are:
+
+- `param_input`: passed to `SCVI.setup_anndata`, with `layer`, `batch_key`, `categorical_covariate_keys`, and `continuous_covariate_keys`. Existing CLI values for `--batch_key` and `--scanvi_categorical_covariate_keys` override matching config keys when supplied.
+- `model_input`: passed to `scvi.model.SCVI`, including bounded architecture options such as `n_hidden`, `n_latent`, `n_layers`, `dropout_rate`, `dispersion`, `gene_likelihood`, and `latent_distribution`.
+- `train_input`: passed to the initial `SCVI.train` call.
+- `scanvi_train_input`: optionally passed to `SCANVI.train`; if omitted, `train_input` is reused for scANVI training.
+
+Lists are accepted only for covariate-key fields because those are single parameter values in scvi-tools. Sweep-style entries such as `n_layers = [1, 2]` are rejected.
 
 PanHumanPy optional controls:
 
