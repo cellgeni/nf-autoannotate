@@ -1,0 +1,571 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cellgeni/nf-autoannotate/nextflow_schema.json",
+  "title": "nf-autoannotate pipeline parameters",
+  "description": "Parameter schema for nf-autoannotate. Use with Nextflow -params-file YAML files.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "#/$defs/input_output_options"
+    },
+    {
+      "$ref": "#/$defs/reference_filtering_options"
+    },
+    {
+      "$ref": "#/$defs/model_reuse_options"
+    },
+    {
+      "$ref": "#/$defs/scanvi_options"
+    },
+    {
+      "$ref": "#/$defs/celltypist_options"
+    },
+    {
+      "$ref": "#/$defs/panhumanpy_options"
+    },
+    {
+      "$ref": "#/$defs/merge_output_options"
+    }
+  ],
+  "$defs": {
+    "input_output_options": {
+      "title": "Input and output options",
+      "type": "object",
+      "fa_icon": "fas fa-file",
+      "required": [
+        "ref_h5ad",
+        "query_h5ad",
+        "project_tag",
+        "ref_label_col"
+      ],
+      "properties": {
+        "ref_h5ad": {
+          "type": "string",
+          "description": "Reference AnnData .h5ad file.",
+          "format": "file-path",
+          "exists": true,
+          "minLength": 1
+        },
+        "query_h5ad": {
+          "type": "string",
+          "description": "Query AnnData .h5ad file to annotate.",
+          "format": "file-path",
+          "exists": true,
+          "minLength": 1
+        },
+        "project_tag": {
+          "type": "string",
+          "description": "Short tag used in output filenames and report directory names.",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "outdir": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Output directory. If unset, autoannotate-results-<project_tag> is used.",
+          "format": "directory-path"
+        },
+        "ref_label_col": {
+          "type": "string",
+          "description": "Reference obs column containing cell type labels.",
+          "minLength": 1
+        }
+      }
+    },
+    "reference_filtering_options": {
+      "title": "Reference filtering options",
+      "type": "object",
+      "fa_icon": "fas fa-filter",
+      "properties": {
+        "ref_filter_col": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Reference obs column used to filter reference cells before training."
+        },
+        "ref_filter_values": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Comma-separated values to keep from ref_filter_col."
+        }
+      }
+    },
+    "model_reuse_options": {
+      "title": "Model reuse options",
+      "type": "object",
+      "fa_icon": "fas fa-box-archive",
+      "properties": {
+        "celltypist_model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional pretrained CellTypist model path.",
+          "format": "file-path",
+          "exists": true
+        },
+        "scanvi_model_dir": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional pretrained scANVI model directory.",
+          "format": "directory-path",
+          "exists": true
+        },
+        "scvi_reference_model_dir": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional pretrained scVI reference model directory used to initialize scANVI.",
+          "format": "directory-path",
+          "exists": true
+        }
+      }
+    },
+    "scanvi_options": {
+      "title": "scVI/scANVI options",
+      "type": "object",
+      "fa_icon": "fas fa-network-wired",
+      "properties": {
+        "batch_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional obs column for scVI batch correction."
+        },
+        "scvi_layer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional AnnData layer passed to SCVI.setup_anndata."
+        },
+        "scanvi_categorical_covariate_keys": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Comma-separated categorical covariate obs columns."
+        },
+        "scanvi_continuous_covariate_keys": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Comma-separated continuous covariate obs columns."
+        },
+        "scanvi_hvg_n_top_genes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Number of HVGs for scVI/scANVI training. Use 0 to keep all shared genes.",
+          "minimum": 0,
+          "default": 2500
+        },
+        "scvi_training_config": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional Python config.py with nf-scVI-metrics-style single-value settings. Takes precedence over individual scVI/scANVI params.",
+          "format": "file-path",
+          "exists": true
+        },
+        "unknown_label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Unlabeled category used by scANVI.",
+          "minLength": 1,
+          "default": "Unknown"
+        },
+        "scvi_n_hidden": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "SCVI n_hidden model parameter.",
+          "minimum": 1
+        },
+        "scvi_n_latent": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "SCVI n_latent model parameter.",
+          "minimum": 1
+        },
+        "scvi_n_layers": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "SCVI n_layers model parameter.",
+          "minimum": 1
+        },
+        "scvi_dropout_rate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "SCVI dropout_rate model parameter.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "scvi_dispersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "SCVI dispersion model parameter."
+        },
+        "scvi_gene_likelihood": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "SCVI gene_likelihood model parameter."
+        },
+        "scvi_latent_distribution": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "SCVI latent_distribution model parameter."
+        },
+        "scvi_train_max_epochs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "SCVI.train max_epochs.",
+          "minimum": 1
+        },
+        "scvi_train_batch_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "SCVI.train batch_size.",
+          "minimum": 1
+        },
+        "scvi_train_train_size": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "SCVI.train train_size.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "scvi_train_validation_size": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "SCVI.train validation_size.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "scvi_train_early_stopping": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "SCVI.train early_stopping."
+        },
+        "scvi_train_early_stopping_patience": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "SCVI.train early_stopping_patience.",
+          "minimum": 1
+        },
+        "scanvi_train_max_epochs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Reference SCANVI.train max_epochs.",
+          "minimum": 1
+        },
+        "scanvi_train_batch_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Reference SCANVI.train batch_size.",
+          "minimum": 1
+        },
+        "scanvi_train_train_size": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Reference SCANVI.train train_size.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "scanvi_train_validation_size": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Reference SCANVI.train validation_size.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "scanvi_train_early_stopping": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Reference SCANVI.train early_stopping."
+        },
+        "scanvi_train_early_stopping_patience": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Reference SCANVI.train early_stopping_patience.",
+          "minimum": 1
+        },
+        "scanvi_query_max_epochs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Query-mapping SCANVI.train max_epochs.",
+          "minimum": 1,
+          "default": 100
+        },
+        "scanvi_query_batch_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Query-mapping SCANVI.train batch_size.",
+          "minimum": 1
+        },
+        "scanvi_query_train_size": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Query-mapping SCANVI.train train_size.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "scanvi_query_validation_size": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Query-mapping SCANVI.train validation_size.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "scanvi_query_early_stopping": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Query-mapping SCANVI.train early_stopping."
+        },
+        "scanvi_query_early_stopping_patience": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Query-mapping SCANVI.train early_stopping_patience.",
+          "minimum": 1
+        },
+        "scanvi_query_check_val_every_n_epoch": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Query-mapping SCANVI.train check_val_every_n_epoch.",
+          "minimum": 1,
+          "default": 10
+        },
+        "scanvi_query_plan_weight_decay": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Query-mapping SCANVI.train plan weight decay.",
+          "minimum": 0,
+          "default": 0.0
+        }
+      }
+    },
+    "celltypist_options": {
+      "title": "CellTypist options",
+      "type": "object",
+      "fa_icon": "fas fa-tags",
+      "properties": {
+        "celltypist_training_mode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "standard",
+            "detailed",
+            null
+          ],
+          "default": "detailed",
+          "description": "CellTypist training mode."
+        },
+        "celltypist_balance_cells_per_label": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Maximum reference cells per label in detailed mode.",
+          "minimum": 1,
+          "default": 500
+        },
+        "celltypist_feature_selection": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Run feature selection before final CellTypist fitting.",
+          "default": true
+        },
+        "celltypist_feature_selection_top_genes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Top genes per label during CellTypist feature selection.",
+          "minimum": 1,
+          "default": 100
+        },
+        "celltypist_feature_selection_max_iter": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Quick SGD iterations for feature selection.",
+          "minimum": 1,
+          "default": 5
+        },
+        "celltypist_max_iter": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Final CellTypist model fitting iterations.",
+          "minimum": 1,
+          "default": 100
+        }
+      }
+    },
+    "panhumanpy_options": {
+      "title": "PanHumanPy options",
+      "type": "object",
+      "fa_icon": "fas fa-dna",
+      "properties": {
+        "panhumanpy_feature_names_col": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional query var column containing gene symbols for PanHumanPy."
+        }
+      }
+    },
+    "merge_output_options": {
+      "title": "Merge and output options",
+      "type": "object",
+      "fa_icon": "fas fa-table",
+      "properties": {
+        "scanvi_obs_col": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "scANVI label column name written to output obs.",
+          "default": "scanvi_label"
+        },
+        "scanvi_score_col": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "scANVI confidence column name written to output obs.",
+          "default": "scanvi_confidence"
+        },
+        "query_cluster_col": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Query obs cluster column used for summaries and marker genes.",
+          "default": "leiden"
+        },
+        "compute_missing_clusters": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Compute Leiden clusters if query_cluster_col is absent.",
+          "default": false
+        },
+        "marker_genes_n_top": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Number of marker genes to report per cluster.",
+          "minimum": 1,
+          "default": 50
+        },
+        "marker_genes_method": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "wilcoxon",
+            "t-test",
+            null
+          ],
+          "default": "wilcoxon",
+          "description": "Differential expression test for marker ranking."
+        },
+        "marker_dotplot": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Write a marker-gene dotplot PNG.",
+          "default": true
+        },
+        "marker_dotplot_n_top": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Number of ranked marker genes per cluster in the dotplot.",
+          "minimum": 1,
+          "default": 5
+        }
+      }
+    }
+  }
+}

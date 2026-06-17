@@ -38,6 +38,8 @@ Optional reference filtering:
 
 `--ref_filter_col` and `--ref_filter_values` must be supplied together.
 
+Run parameters are normally defined in a YAML file passed with `-params-file`. Start from [examples/autoannotate.params.yml](examples/autoannotate.params.yml), edit the values for your run, and launch the workflow with that file. Parameter defaults and runtime settings live in [nextflow.config](nextflow.config), and user-facing parameters are described and validated by [nextflow_schema.json](nextflow_schema.json).
+
 
 ## Tool-Specific Parameters
 
@@ -107,7 +109,7 @@ Output naming and merge behavior:
 
 When missing clusters are explicitly computed, the merge step reuses existing neighbors or `X_pca` if present. Otherwise it runs PCA/neighbors/Leiden on a normalized, log-transformed copy so the final query matrix is not modified.
 
-Parameter defaults live in [nextflow.config](nextflow.config).
+Parameter defaults live in [nextflow.config](nextflow.config); user-facing parameter validation lives in [nextflow_schema.json](nextflow_schema.json).
 
 ## Validation
 
@@ -220,18 +222,24 @@ By default this downloads the full PBMC68K object into `data/demo/raw/`, writes 
 - `data/demo/query.h5ad`
 - `data/demo/dataset_split_metadata.json`
 
-Use the generated files for a training-mode demo run:
+Use the generated files for a demo run by editing a params file:
+
+```bash
+cp examples/autoannotate.params.yml demo.params.yml
+```
+
+```yaml
+ref_h5ad: data/demo/reference.h5ad
+query_h5ad: data/demo/query.h5ad
+project_tag: demo
+ref_label_col: bulk_labels
+query_cluster_col: louvain
+outdir: results/demo
+```
 
 ```bash
 module load cellgen/nextflow
-
-nextflow run main.nf \
-  --ref_h5ad data/demo/reference.h5ad \
-  --query_h5ad data/demo/query.h5ad \
-  --project_tag demo \
-  --ref_label_col bulk_labels \
-  --query_cluster_col louvain \
-  --outdir results/demo
+nextflow run main.nf -params-file demo.params.yml
 ```
 
 The helper also supports other sources:

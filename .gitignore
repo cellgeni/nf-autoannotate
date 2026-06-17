@@ -1,0 +1,9 @@
+# Nextflow runtime artifacts
+.nextflow*
+nf-work/
+autoannotate-reports-*/
+
+# Local params files copied from examples
+params.yml
+demo.params.yml
+*.local.params.yml

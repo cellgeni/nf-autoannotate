@@ -2,6 +2,10 @@
 
 nextflow.enable.dsl=2
 
+include { validateParameters } from 'plugin/nf-schema'
+
+validateParameters()
+
 def celltypistMode = params.celltypist_model ? 'pretrained' : 'train'
 def scanviMode = params.scanvi_model_dir ? 'pretrained' : 'train'
 

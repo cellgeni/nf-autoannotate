@@ -1,0 +1,81 @@
+# Copy this file, edit values for a run, then launch with:
+# nextflow run main.nf -params-file your-run.params.yml
+
+# Required inputs
+ref_h5ad: /path/to/reference.h5ad
+query_h5ad: /path/to/query.h5ad
+project_tag: autoannotate_run
+ref_label_col: cell_type
+
+# Optional output location
+outdir: results/autoannotate_run
+
+# Optional reference filtering
+ref_filter_col: null
+ref_filter_values: null
+
+# Optional pretrained model reuse
+celltypist_model: null
+scanvi_model_dir: null
+scvi_reference_model_dir: null
+
+# Output column names and merge behavior
+scanvi_obs_col: scanvi_label
+scanvi_score_col: scanvi_confidence
+query_cluster_col: leiden
+compute_missing_clusters: false
+marker_genes_n_top: 50
+marker_genes_method: wilcoxon
+marker_dotplot: true
+marker_dotplot_n_top: 5
+
+# scVI/scANVI setup and model controls
+batch_key: null
+scvi_layer: null
+scanvi_categorical_covariate_keys: null
+scanvi_continuous_covariate_keys: null
+scanvi_hvg_n_top_genes: 2500
+scvi_training_config: null
+unknown_label: Unknown
+
+scvi_n_hidden: null
+scvi_n_latent: null
+scvi_n_layers: null
+scvi_dropout_rate: null
+scvi_dispersion: null
+scvi_gene_likelihood: null
+scvi_latent_distribution: null
+
+scvi_train_max_epochs: null
+scvi_train_batch_size: null
+scvi_train_train_size: null
+scvi_train_validation_size: null
+scvi_train_early_stopping: null
+scvi_train_early_stopping_patience: null
+
+scanvi_train_max_epochs: null
+scanvi_train_batch_size: null
+scanvi_train_train_size: null
+scanvi_train_validation_size: null
+scanvi_train_early_stopping: null
+scanvi_train_early_stopping_patience: null
+
+scanvi_query_max_epochs: 100
+scanvi_query_batch_size: null
+scanvi_query_train_size: null
+scanvi_query_validation_size: null
+scanvi_query_early_stopping: null
+scanvi_query_early_stopping_patience: null
+scanvi_query_check_val_every_n_epoch: 10
+scanvi_query_plan_weight_decay: 0.0
+
+# PanHumanPy controls
+panhumanpy_feature_names_col: null
+
+# CellTypist controls
+celltypist_training_mode: detailed
+celltypist_balance_cells_per_label: 500
+celltypist_feature_selection: true
+celltypist_feature_selection_top_genes: 100
+celltypist_feature_selection_max_iter: 5
+celltypist_max_iter: 100
