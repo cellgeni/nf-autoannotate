@@ -141,7 +141,6 @@ process SCANVI_TRAIN_MODEL {
 
     input:
     path ref_h5ad
-    path query_h5ad
     path validation_manifest
     path shared_genes
 
@@ -153,7 +152,6 @@ process SCANVI_TRAIN_MODEL {
     """
     python3 ${projectDir}/scripts/train_scanvi.py \
         --ref-h5ad ${ref_h5ad} \
-        --query-h5ad ${query_h5ad} \
         --validation-manifest ${validation_manifest} \
         --shared-genes ${shared_genes} \
         --ref-label-col '${params.ref_label_col}' \
@@ -297,7 +295,7 @@ workflow {
 
     scanvi_model_ch = scanviMode == 'pretrained'
         ? Channel.value(file(params.scanvi_model_dir, checkIfExists: true))
-        : SCANVI_TRAIN_MODEL(ref_h5ad_ch, query_h5ad_ch, validation_manifest_ch, shared_genes_ch).model_dir
+        : SCANVI_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch, shared_genes_ch).model_dir
 
     celltypist_predictions_ch = CELLTYPIST_ANNOTATE(query_h5ad_ch, shared_genes_ch, celltypist_model_ch).predictions
     scanvi_annotation_outputs = SCANVI_ANNOTATE(query_h5ad_ch, shared_genes_ch, scanvi_model_ch)

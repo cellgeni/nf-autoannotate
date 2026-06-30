@@ -46,7 +46,7 @@ Run parameters are normally defined in a YAML file passed with `-params-file`. S
 The pipeline selects model behavior from artifact flags instead of explicit mode flags:
 
 - CellTypist trains from the reference unless `--celltypist_model` is supplied.
-- scANVI loads `--scanvi_model_dir` when supplied; otherwise it trains a model, optionally initialized from `--scvi_reference_model_dir`.
+- scANVI loads `--scanvi_model_dir` when supplied; otherwise it trains a reference scANVI model from labeled reference cells, optionally initialized from `--scvi_reference_model_dir`, then maps the query with scANVI query mapping. This query-mapping step uses the scArches-style transfer-learning support in scvi-tools.
 - PanHumanPy always annotates the query directly.
 
 Required when using pretrained or external artifacts:
@@ -78,7 +78,7 @@ scANVI optional controls:
 - `--scvi_train_max_epochs`, `--scvi_train_batch_size`, `--scvi_train_train_size`, `--scvi_train_validation_size`, `--scvi_train_early_stopping`, `--scvi_train_early_stopping_patience`: optional `SCVI.train` controls.
 - `--scanvi_train_max_epochs`, `--scanvi_train_batch_size`, `--scanvi_train_train_size`, `--scanvi_train_validation_size`, `--scanvi_train_early_stopping`, `--scanvi_train_early_stopping_patience`: optional reference `SCANVI.train` controls.
 - `--scanvi_query_max_epochs`, `--scanvi_query_batch_size`, `--scanvi_query_train_size`, `--scanvi_query_validation_size`, `--scanvi_query_early_stopping`, `--scanvi_query_early_stopping_patience`, `--scanvi_query_check_val_every_n_epoch`, `--scanvi_query_plan_weight_decay`: optional query-mapping `SCANVI.train` controls. `--scanvi_query_max_epochs` defaults to `100`; the other values preserve current script defaults when unset.
-- `--unknown_label`: unlabeled query category for scANVI training. Default: `Unknown`.
+- `--unknown_label`: unlabeled category used by scANVI during query mapping. Default: `Unknown`.
 
 There are two ways to configure scVI/scANVI training:
 
@@ -333,7 +333,7 @@ nextflow run main.nf \
 ## Assumptions
 
 - Input `.h5ad` files should already be normalized/preprocessed appropriately for the chosen annotation methods.
-- Gene alignment for CellTypist and scANVI uses the reference-query intersection from validation.
+- Gene alignment for CellTypist uses the reference-query intersection from validation. Fresh scANVI training starts from the shared gene set to build a reference model; query mapping follows the saved scANVI model registry.
 - PanHumanPy receives the original query feature space, optionally using `--panhumanpy_feature_names_col` for symbols.
 - CellTypist, scANVI, and PanHumanPy outputs are kept separate.
 - PanHumanPy is not compared with CellTypist or scANVI because it uses a different reference.

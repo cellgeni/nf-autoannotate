@@ -5,15 +5,13 @@ import json
 import runpy
 
 import anndata as ad
-import pandas as pd
 import scanpy as sc
 from scvi.model import SCANVI, SCVI
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train an scANVI model from reference and query h5ad files.")
+    parser = argparse.ArgumentParser(description="Train an scANVI reference model from a reference h5ad file.")
     parser.add_argument("--ref-h5ad", required=True)
-    parser.add_argument("--query-h5ad", required=True)
     parser.add_argument("--validation-manifest", required=True)
     parser.add_argument("--shared-genes", required=True)
     parser.add_argument("--ref-label-col", required=True)
@@ -297,9 +295,7 @@ def main():
         manifest = json.load(handle)
 
     ref = ad.read_h5ad(args.ref_h5ad)
-    query = ad.read_h5ad(args.query_h5ad)
     ref.var_names_make_unique()
-    query.var_names_make_unique()
     ref = apply_reference_filter(ref, manifest)
 
     if args.scvi_model_dir:
@@ -317,33 +313,22 @@ def main():
     else:
         shared_genes = read_gene_list(args.shared_genes)
         ref = ref[:, shared_genes].copy()
-        query = query[:, shared_genes].copy()
 
         ref.obs["_scanvi_label"] = ref.obs[args.ref_label_col].astype(str)
-        query.obs["_scanvi_label"] = pd.Categorical([args.unknown_label] * query.n_obs)
-
-        combined = ad.concat(
-            {"reference": ref, "query": query},
-            join="outer",
-            label="_source",
-            index_unique=None,
-            merge="same",
-        )
-        combined.obs["_scanvi_label"] = combined.obs["_scanvi_label"].astype(str)
-        combined = subset_to_hvgs(combined, args.hvg_n_top_genes, effective_batch_key)
-        SCVI.setup_anndata(combined, **setup_params)
-        vae = SCVI(combined, **training_config["model_input"])
+        ref = subset_to_hvgs(ref, args.hvg_n_top_genes, effective_batch_key)
+        SCVI.setup_anndata(ref, **setup_params)
+        vae = SCVI(ref, **training_config["model_input"])
         vae.train(**training_config["train_input"])
 
         scanvi = SCANVI.from_scvi_model(
             vae,
-            adata=combined,
+            adata=ref,
             labels_key="_scanvi_label",
             unlabeled_category=args.unknown_label,
         )
         scanvi.train(**training_config["scanvi_train_input"])
-        genes = combined.var_names.tolist()
-        inference_mode = "direct_load"
+        genes = ref.var_names.tolist()
+        inference_mode = "query_mapping"
 
     scanvi.save(args.output_model_dir, overwrite=True, save_anndata=True)
 
