@@ -123,7 +123,10 @@ Before model steps run, the pipeline checks that:
 - `ref_label_col` exists in `ref_h5ad.obs`
 - `batch_key`, if supplied, exists in both reference and query `obs`
 - all `scanvi_categorical_covariate_keys`, if supplied, exist in both objects
+- all `scanvi_continuous_covariate_keys`, if supplied, exist in both objects
 - `panhumanpy_feature_names_col`, if supplied, exists in `query_h5ad.var`
+- `query_h5ad.X` contains raw non-negative integer counts
+- `query_cluster_col` exists in `query_h5ad.obs`, unless `compute_missing_clusters` is enabled
 - reference filters are valid and keep at least one reference cell
 - reference and query cell indices are unique
 - reference and query gene indices are unique

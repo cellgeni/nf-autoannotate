@@ -75,6 +75,8 @@ process VALIDATE_INPUTS {
         ${(!useNfScviMetricsConfig && params.scanvi_continuous_covariate_keys) ? "--continuous-covariate-keys '${params.scanvi_continuous_covariate_keys}'" : ''} \
         ${useNfScviMetricsConfig ? "--nf-scvi-metrics-config ${nfScviMetricsConfig}" : ''} \
         ${params.panhumanpy_feature_names_col ? "--panhumanpy-feature-names-col '${params.panhumanpy_feature_names_col}'" : ''} \
+        --query-cluster-col '${params.query_cluster_col}' \
+        ${params.compute_missing_clusters ? '--compute-missing-clusters' : ''} \
         ${refFilterCol ? "--ref-filter-col '${refFilterCol}'" : ''} \
         ${refFilterValues ? "--ref-filter-values '${refFilterValues}'" : ''} \
         --output validation_manifest.json \

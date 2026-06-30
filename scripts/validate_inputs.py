@@ -4,9 +4,16 @@ import argparse
 import json
 import re
 import runpy
+
+import h5py
+import numpy as np
 from pathlib import Path
 
 import anndata as ad
+
+
+MATRIX_CHUNK_SIZE = 1_000_000
+INTEGER_TOLERANCE = 1e-6
 
 
 def parse_args():
@@ -19,11 +26,67 @@ def parse_args():
     parser.add_argument("--continuous-covariate-keys")
     parser.add_argument("--nf-scvi-metrics-config")
     parser.add_argument("--panhumanpy-feature-names-col")
+    parser.add_argument("--query-cluster-col", required=True)
+    parser.add_argument("--compute-missing-clusters", action="store_true")
     parser.add_argument("--ref-filter-col")
     parser.add_argument("--ref-filter-values")
     parser.add_argument("--output", required=True)
     parser.add_argument("--shared-genes-output", required=True)
     return parser.parse_args()
+
+
+def matrix_value_dataset(handle: h5py.File, label: str) -> h5py.Dataset:
+    if "X" not in handle:
+        raise ValueError(f"Missing required /X matrix in {label}")
+
+    matrix = handle["X"]
+    if isinstance(matrix, h5py.Dataset):
+        return matrix
+    if isinstance(matrix, h5py.Group) and "data" in matrix and isinstance(matrix["data"], h5py.Dataset):
+        return matrix["data"]
+    raise ValueError(f"Unsupported /X matrix encoding in {label}")
+
+
+def iter_dataset_chunks(dataset: h5py.Dataset, chunk_size: int = MATRIX_CHUNK_SIZE):
+    if dataset.size == 0:
+        return
+
+    if len(dataset.shape) == 1:
+        for start in range(0, dataset.shape[0], chunk_size):
+            yield dataset[start : start + chunk_size]
+        return
+
+    if len(dataset.shape) == 2:
+        rows_per_chunk = max(1, chunk_size // max(1, dataset.shape[1]))
+        for start in range(0, dataset.shape[0], rows_per_chunk):
+            yield dataset[start : start + rows_per_chunk, :]
+        return
+
+    raise ValueError("Unsupported matrix dimensionality")
+
+
+def require_raw_count_matrix(handle: h5py.File, label: str) -> None:
+    dataset = matrix_value_dataset(handle, label)
+    if not np.issubdtype(dataset.dtype, np.number):
+        raise ValueError(f"{label} /X must contain numeric raw count values")
+    if np.issubdtype(dataset.dtype, np.unsignedinteger):
+        return
+
+    for chunk in iter_dataset_chunks(dataset):
+        values = np.asarray(chunk)
+        if values.size == 0:
+            continue
+        if not np.isfinite(values).all():
+            raise ValueError(f"{label} /X contains non-finite values; expected raw non-negative integer counts")
+        if (values < 0).any():
+            raise ValueError(f"{label} /X contains negative values; expected raw non-negative integer counts")
+        if np.issubdtype(values.dtype, np.integer):
+            continue
+        if (np.abs(values - np.rint(values)) > INTEGER_TOLERANCE).any():
+            raise ValueError(
+                f"{label} /X does not look like raw counts: found non-integer values. "
+                "Provide raw non-negative integer counts in adata.X, not normalized or log-transformed expression."
+            )
 
 
 def require_obs_column(adata: ad.AnnData, column: str, label: str) -> None:
@@ -225,6 +288,16 @@ def resolve_reference_filter(args: argparse.Namespace) -> tuple[str | None, list
     return filter_col, filter_values
 
 
+def require_query_cluster_column(
+    query: ad.AnnData,
+    query_cluster_col: str,
+    compute_missing_clusters: bool,
+) -> None:
+    if compute_missing_clusters:
+        return
+    require_obs_column(query, query_cluster_col, "query h5ad")
+
+
 def main():
     args = parse_args()
 
@@ -235,6 +308,9 @@ def main():
         raise FileNotFoundError(f"Reference h5ad not found: {ref_path}")
     if not query_path.exists():
         raise FileNotFoundError(f"Query h5ad not found: {query_path}")
+
+    with h5py.File(query_path, "r") as query_handle:
+        require_raw_count_matrix(query_handle, "query h5ad")
 
     ref = ad.read_h5ad(ref_path, backed="r")
     query = ad.read_h5ad(query_path, backed="r")
@@ -290,6 +366,7 @@ def main():
         raise ValueError(
             f"Missing required var column '{args.panhumanpy_feature_names_col}' in query h5ad"
         )
+    require_query_cluster_column(query, args.query_cluster_col, args.compute_missing_clusters)
 
     require_unique_index(ref, "Reference")
     require_unique_index(query, "Query")
@@ -333,6 +410,8 @@ def main():
         "categorical_covariate_keys": categorical_covariate_keys,
         "continuous_covariate_keys": continuous_covariate_keys,
         "panhumanpy_feature_names_col": args.panhumanpy_feature_names_col,
+        "query_cluster_col": args.query_cluster_col,
+        "compute_missing_clusters": args.compute_missing_clusters,
         "ref_filter_col": ref_filter_col,
         "ref_filter_values": ref_filter_values,
         "gene_id_type": ref_gene_id_type,
