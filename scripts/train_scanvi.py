@@ -83,6 +83,47 @@ def parse_comma_separated(raw_values: str | None) -> list[str]:
     return [value.strip() for value in raw_values.split(",") if value.strip()]
 
 
+def single_value_from_config(section: str, key: str, value):
+    if isinstance(value, (list, tuple, set)):
+        values = list(value)
+        if len(values) != 1:
+            raise ValueError(
+                f"{section}.{key} must contain exactly one value for nf-autoannotate, "
+                f"not a sweep with {len(values)} values"
+            )
+        return values[0]
+    if isinstance(value, dict):
+        raise ValueError(f"{section}.{key} must be a single value, not a nested dictionary")
+    return value
+
+
+def normalize_config_values(section: str, values: dict, allowed_keys: set[str]) -> dict:
+    unknown = sorted(set(values) - allowed_keys)
+    if unknown:
+        raise ValueError(f"Unsupported {section} keys in --training-config: {', '.join(unknown)}")
+    return {key: single_value_from_config(section, key, value) for key, value in values.items()}
+
+
+def normalize_setup_config(values: dict) -> dict:
+    allowed_keys = {
+        "layer",
+        "batch_key",
+        "categorical_covariate_keys",
+        "continuous_covariate_keys",
+    }
+    unknown = sorted(set(values) - allowed_keys)
+    if unknown:
+        raise ValueError(f"Unsupported param_input keys in --training-config: {', '.join(unknown)}")
+
+    normalized = {}
+    for key, value in values.items():
+        if key in {"categorical_covariate_keys", "continuous_covariate_keys"}:
+            normalized[key] = parse_comma_separated(value) if isinstance(value, str) else list(value or [])
+        else:
+            normalized[key] = single_value_from_config("param_input", key, value)
+    return normalized
+
+
 def load_training_config(path: str | None) -> dict[str, dict]:
     if not path:
         return {
@@ -93,69 +134,75 @@ def load_training_config(path: str | None) -> dict[str, dict]:
         }
 
     namespace = runpy.run_path(path)
-    config = {
-        "model_input": dict(namespace.get("model_input", {})),
-        "param_input": dict(namespace.get("param_input", {})),
-        "train_input": dict(namespace.get("train_input", {})),
-        "scanvi_train_input": dict(namespace.get("scanvi_train_input", namespace.get("train_input", {}))),
-    }
+    if "model_input" not in namespace:
+        raise ValueError("--training-config must define a model_input dictionary")
 
-    allowed_keys = {
-        "model_input": {
-            "n_hidden",
-            "n_latent",
-            "n_layers",
-            "dropout_rate",
-            "dispersion",
-            "gene_likelihood",
-            "latent_distribution",
-        },
-        "param_input": {
-            "layer",
-            "batch_key",
-            "categorical_covariate_keys",
-            "continuous_covariate_keys",
-        },
-        "train_input": {
-            "max_epochs",
-            "accelerator",
-            "devices",
-            "train_size",
-            "validation_size",
-            "batch_size",
-            "early_stopping",
-            "early_stopping_patience",
-        },
-        "scanvi_train_input": {
-            "max_epochs",
-            "accelerator",
-            "devices",
-            "train_size",
-            "validation_size",
-            "batch_size",
-            "early_stopping",
-            "early_stopping_patience",
-        },
-    }
-    list_allowed = {
-        ("param_input", "categorical_covariate_keys"),
-        ("param_input", "continuous_covariate_keys"),
-    }
+    raw_model_input = namespace.get("model_input") or {}
+    raw_param_input = namespace.get("param_input") or {}
+    if not isinstance(raw_model_input, dict):
+        raise ValueError("model_input in --training-config must be a dictionary")
+    if not isinstance(raw_param_input, dict):
+        raise ValueError("param_input in --training-config must be a dictionary")
 
-    for section, values in config.items():
-        unknown = sorted(set(values) - allowed_keys[section])
-        if unknown:
-            raise ValueError(f"Unsupported {section} keys in --training-config: {', '.join(unknown)}")
-        for key, value in values.items():
-            if isinstance(value, (list, tuple, set)) and (section, key) not in list_allowed:
-                raise ValueError(
-                    f"{section}.{key} must be a single value, not a list/tuple/set sweep. "
-                    "Use one value per parameter for nf-autoannotate."
-                )
-            if isinstance(value, dict):
-                raise ValueError(f"{section}.{key} must be a single value, not a nested dictionary")
+    model_keys = {
+        "n_hidden",
+        "n_latent",
+        "n_layers",
+        "dropout_rate",
+        "dispersion",
+        "gene_likelihood",
+        "latent_distribution",
+    }
+    train_keys = {
+        "max_epochs",
+        "accelerator",
+        "devices",
+        "train_size",
+        "validation_size",
+        "batch_size",
+        "early_stopping",
+        "early_stopping_patience",
+    }
+    nf_scvi_metrics_model_keys = model_keys | train_keys | {"adata_path", "counts_layer"}
+    unknown_model = sorted(set(raw_model_input) - nf_scvi_metrics_model_keys)
+    if unknown_model:
+        raise ValueError(f"Unsupported model_input keys in --training-config: {', '.join(unknown_model)}")
 
-    return config
+    normalized_model_input = normalize_config_values(
+        "model_input",
+        {key: value for key, value in raw_model_input.items() if key not in {"adata_path", "counts_layer"}},
+        model_keys | train_keys,
+    )
+    model_input = {key: value for key, value in normalized_model_input.items() if key in model_keys}
+    train_input = {key: value for key, value in normalized_model_input.items() if key in train_keys}
+    param_input = normalize_setup_config(raw_param_input)
+    if "counts_layer" in raw_model_input and "layer" not in param_input:
+        param_input["layer"] = single_value_from_config(
+            "model_input", "counts_layer", raw_model_input["counts_layer"]
+        )
+
+    explicit_train_input = namespace.get("train_input", {}) or {}
+    if explicit_train_input:
+        if not isinstance(explicit_train_input, dict):
+            raise ValueError("train_input in --training-config must be a dictionary")
+        train_input.update(normalize_config_values("train_input", explicit_train_input, train_keys))
+
+    raw_scanvi_train_input = namespace.get("scanvi_train_input", None)
+    if raw_scanvi_train_input is None:
+        scanvi_train_input = dict(train_input)
+    else:
+        if not isinstance(raw_scanvi_train_input, dict):
+            raise ValueError("scanvi_train_input in --training-config must be a dictionary")
+        scanvi_train_input = normalize_config_values(
+            "scanvi_train_input", raw_scanvi_train_input, train_keys
+        )
+
+    return {
+        "model_input": model_input,
+        "param_input": param_input,
+        "train_input": train_input,
+        "scanvi_train_input": scanvi_train_input,
+    }
 
 
 def add_if_set(target: dict, key: str, value):

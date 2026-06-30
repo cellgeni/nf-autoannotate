@@ -171,14 +171,22 @@
           "minimum": 0,
           "default": 2500
         },
+        "nf_scvi_metrics_config": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional nf-scVI-metrics-style Python config.py. Use this as a compatibility mode instead of adding the Python file path to the YAML params file. Takes precedence over individual scVI/scANVI params.",
+          "format": "file-path",
+          "exists": true
+        },
         "scvi_training_config": {
           "type": [
             "string",
             "null"
           ],
-          "description": "Optional Python config.py with nf-scVI-metrics-style single-value settings. Takes precedence over individual scVI/scANVI params.",
-          "format": "file-path",
-          "exists": true
+          "description": "Deprecated. Use nf_scvi_metrics_config instead.",
+          "hidden": true
         },
         "unknown_label": {
           "type": [

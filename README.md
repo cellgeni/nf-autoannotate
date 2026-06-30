@@ -78,18 +78,22 @@ scANVI optional controls:
 - `--scvi_train_max_epochs`, `--scvi_train_batch_size`, `--scvi_train_train_size`, `--scvi_train_validation_size`, `--scvi_train_early_stopping`, `--scvi_train_early_stopping_patience`: optional `SCVI.train` controls.
 - `--scanvi_train_max_epochs`, `--scanvi_train_batch_size`, `--scanvi_train_train_size`, `--scanvi_train_validation_size`, `--scanvi_train_early_stopping`, `--scanvi_train_early_stopping_patience`: optional reference `SCANVI.train` controls.
 - `--scanvi_query_max_epochs`, `--scanvi_query_batch_size`, `--scanvi_query_train_size`, `--scanvi_query_validation_size`, `--scanvi_query_early_stopping`, `--scanvi_query_early_stopping_patience`, `--scanvi_query_check_val_every_n_epoch`, `--scanvi_query_plan_weight_decay`: optional query-mapping `SCANVI.train` controls. `--scanvi_query_max_epochs` defaults to `100`; the other values preserve current script defaults when unset.
-- `--scvi_training_config`: optional Python config file for single-value scVI/scANVI training parameters. See [examples/scvi_training_config.py](examples/scvi_training_config.py). When provided, it takes precedence over the individual scVI/scANVI Nextflow params above.
 - `--unknown_label`: unlabeled query category for scANVI training. Default: `Unknown`.
 
-`--scvi_training_config` accepts dictionaries similar to `nf-scVI-metrics/examples/inputs.py`, but each model and training parameter must contain one value rather than a list of sweep values. Supported sections are:
+There are two ways to configure scVI/scANVI training:
 
-- `param_input`: passed to `SCVI.setup_anndata`, with `layer`, `batch_key`, `categorical_covariate_keys`, and `continuous_covariate_keys`.
-- `model_input`: passed to `scvi.model.SCVI`, including bounded architecture options such as `n_hidden`, `n_latent`, `n_layers`, `dropout_rate`, `dispersion`, `gene_likelihood`, and `latent_distribution`.
-- `train_input`: passed to the initial `SCVI.train` call.
-- `scanvi_train_input`: optionally passed to reference `SCANVI.train`; if omitted, `train_input` is reused for scANVI training.
-- `query_train_input`: optionally passed to query-mapping `SCANVI.train`; use `plan_weight_decay` for the query-training weight decay value. If omitted, the current query-training defaults are used.
+1. Use native nf-autoannotate params, usually through `-params-file examples/autoannotate.params.yml`. This is the recommended mode for new runs.
+2. Use an nf-scVI-metrics-style Python config with `--nf_scvi_metrics_config config.py`. This compatibility mode is for reusing existing nf-scVI-metrics config files without adding that Python file path to the YAML params file.
 
-When `--scvi_training_config` is supplied, individual Nextflow params for setup/model/train/query-train settings are intentionally ignored so the config file is the single source of truth. Lists are accepted only for covariate-key fields because those are single parameter values in scvi-tools. Sweep-style entries such as `n_layers = [1, 2]` are rejected.
+`--nf_scvi_metrics_config` accepts the same top-level `model_input` and `param_input` dictionaries used by `nf-scVI-metrics/examples/inputs.py`. Because nf-autoannotate runs one model configuration per pipeline run, each model/training parameter must resolve to one value. Single-item lists such as `n_latent = [30]` are accepted and unwrapped; sweep lists such as `n_layers = [1, 2]` are rejected during input validation.
+
+Supported `model_input` keys are `n_hidden`, `n_latent`, `n_layers`, `dropout_rate`, `dispersion`, `gene_likelihood`, `latent_distribution`, `max_epochs`, `accelerator`, `devices`, `train_size`, `validation_size`, `batch_size`, `early_stopping`, `early_stopping_patience`, and `counts_layer`. `counts_layer` is mapped to the scvi-tools `layer` setup argument. nf-scVI-metrics dataset selectors such as `adata_path` are ignored because nf-autoannotate uses `--ref_h5ad` and `--query_h5ad`.
+
+Supported `param_input` keys are `batch_key`, `categorical_covariate_keys`, and `continuous_covariate_keys`. `layer` is also accepted for native scvi-tools naming. `categorical_covariate_keys` and `continuous_covariate_keys` may be lists because they are single scvi-tools parameter values, not sweep lists.
+
+Two optional nf-autoannotate-only sections are also supported: `scanvi_train_input` for reference scANVI fine-tuning, and `query_train_input` for query-mapping `SCANVI.train`. If `scanvi_train_input` is omitted, the `model_input` training parameters are reused. In `query_train_input`, use `plan_weight_decay` for query-training weight decay.
+
+When `--nf_scvi_metrics_config` is supplied, individual Nextflow params for setup/model/train/query-train settings are intentionally ignored so the Python config file is the single source of truth for scVI/scANVI settings. The config file is checked during input validation, before scVI/scANVI training starts. The old `--scvi_training_config` parameter is no longer supported.
 
 PanHumanPy optional controls:
 
