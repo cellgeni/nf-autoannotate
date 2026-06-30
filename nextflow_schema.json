@@ -180,14 +180,6 @@
           "format": "file-path",
           "exists": true
         },
-        "scvi_training_config": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Deprecated. Use nf_scvi_metrics_config instead.",
-          "hidden": true
-        },
         "unknown_label": {
           "type": [
             "string",

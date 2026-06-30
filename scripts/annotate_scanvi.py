@@ -49,18 +49,25 @@ def add_if_set(target: dict, key: str, value):
         target[key] = value
 
 
-def validate_single_value_config(section: str, values: dict, allowed_keys: set[str]):
+def single_value_from_config(section: str, key: str, value):
+    if isinstance(value, (list, tuple, set)):
+        values = list(value)
+        if len(values) != 1:
+            raise ValueError(
+                f"{section}.{key} must contain exactly one value for nf-autoannotate, "
+                f"not a sweep with {len(values)} values"
+            )
+        return values[0]
+    if isinstance(value, dict):
+        raise ValueError(f"{section}.{key} must be a single value, not a nested dictionary")
+    return value
+
+
+def normalize_single_value_config(section: str, values: dict, allowed_keys: set[str]) -> dict:
     unknown = sorted(set(values) - allowed_keys)
     if unknown:
         raise ValueError(f"Unsupported {section} keys in --training-config: {', '.join(unknown)}")
-    for key, value in values.items():
-        if isinstance(value, (list, tuple, set)):
-            raise ValueError(
-                f"{section}.{key} must be a single value, not a list/tuple/set sweep. "
-                "Use one value per parameter for nf-autoannotate."
-            )
-        if isinstance(value, dict):
-            raise ValueError(f"{section}.{key} must be a single value, not a nested dictionary")
+    return {key: single_value_from_config(section, key, value) for key, value in values.items()}
 
 
 def query_train_input_from_args(args: argparse.Namespace) -> dict:
@@ -82,7 +89,9 @@ def load_query_train_input(path: str | None, args: argparse.Namespace) -> dict:
         return query_train_input_from_args(args)
 
     namespace = runpy.run_path(path)
-    query_train_input = dict(namespace.get("query_train_input", {}))
+    raw_query_train_input = namespace.get("query_train_input", {}) or {}
+    if not isinstance(raw_query_train_input, dict):
+        raise ValueError("query_train_input in --training-config must be a dictionary")
     allowed_keys = {
         "max_epochs",
         "accelerator",
@@ -95,7 +104,9 @@ def load_query_train_input(path: str | None, args: argparse.Namespace) -> dict:
         "check_val_every_n_epoch",
         "plan_weight_decay",
     }
-    validate_single_value_config("query_train_input", query_train_input, allowed_keys)
+    query_train_input = normalize_single_value_config(
+        "query_train_input", raw_query_train_input, allowed_keys
+    )
     if "plan_weight_decay" in query_train_input:
         query_train_input["plan_kwargs"] = {"weight_decay": query_train_input.pop("plan_weight_decay")}
     if query_train_input:

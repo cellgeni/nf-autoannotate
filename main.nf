@@ -17,14 +17,6 @@ def useNfScviMetricsConfig = params.nf_scvi_metrics_config ? true : false
 def outputDir = params.outdir?.toString()?.trim() ?: "autoannotate-results-${params.project_tag}"
 def refFilterCol = params.ref_filter_col
 def refFilterValues = params.ref_filter_values
-def unsupportedFilterParams = ["ref_timepoint_col", "ref_timepoints"].findAll { params.containsKey(it) }
-if( params.containsKey("scvi_training_config") ) {
-    error "Unsupported parameter: --scvi_training_config. Use --nf_scvi_metrics_config for nf-scVI-metrics-style Python config files."
-}
-
-if( unsupportedFilterParams ) {
-    error "Unsupported parameter(s): ${unsupportedFilterParams.collect { "--${it}" }.join(", ")}. Use --ref_filter_col and --ref_filter_values instead."
-}
 if( !params.project_tag ) {
     error "Missing required parameter: --project_tag"
 }
