@@ -42,6 +42,8 @@ def parse_args():
     parser.add_argument("--scanvi-train-validation-size", type=float)
     parser.add_argument("--scanvi-train-early-stopping", type=parse_bool)
     parser.add_argument("--scanvi-train-early-stopping-patience", type=int)
+    parser.add_argument("--output-scvi-model-dir", required=True)
+    parser.add_argument("--output-scvi-metadata", required=True)
     parser.add_argument("--output-model-dir", required=True)
     parser.add_argument("--output-metadata", required=True)
     return parser.parse_args()
@@ -330,6 +332,7 @@ def main():
         genes = ref.var_names.tolist()
         inference_mode = "query_mapping"
 
+    vae.save(args.output_scvi_model_dir, overwrite=True, save_anndata=True)
     scanvi.save(args.output_model_dir, overwrite=True, save_anndata=True)
 
     metadata = {
@@ -347,10 +350,23 @@ def main():
         "inference_mode": inference_mode,
         "genes": genes,
     }
+    scvi_metadata = {
+        **metadata,
+        "model_type": "scvi",
+    }
+    scanvi_metadata = {
+        **metadata,
+        "model_type": "scanvi",
+        "base_model_dir": args.output_scvi_model_dir,
+    }
+    with open(args.output_scvi_metadata, "w", encoding="utf-8") as handle:
+        json.dump(scvi_metadata, handle, indent=2)
+    with open(f"{args.output_scvi_model_dir}/scvi_model_metadata.json", "w", encoding="utf-8") as handle:
+        json.dump(scvi_metadata, handle, indent=2)
     with open(args.output_metadata, "w", encoding="utf-8") as handle:
-        json.dump(metadata, handle, indent=2)
+        json.dump(scanvi_metadata, handle, indent=2)
     with open(f"{args.output_model_dir}/scanvi_model_metadata.json", "w", encoding="utf-8") as handle:
-        json.dump(metadata, handle, indent=2)
+        json.dump(scanvi_metadata, handle, indent=2)
 
 
 if __name__ == "__main__":

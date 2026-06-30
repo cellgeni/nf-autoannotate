@@ -55,6 +55,7 @@ if( params.marker_dotplot_n_top.toInteger() < 1 ) {
 
 process VALIDATE_INPUTS {
     label 'validation'
+    publishDir outputDir, mode: 'copy', overwrite: true
 
     input:
     path ref_h5ad
@@ -86,6 +87,7 @@ process VALIDATE_INPUTS {
 
 process CELLTYPIST_TRAIN_MODEL {
     label 'cpu4'
+    publishDir outputDir, mode: 'copy', overwrite: true
 
     input:
     path ref_h5ad
@@ -138,6 +140,7 @@ process CELLTYPIST_ANNOTATE {
 
 process SCANVI_TRAIN_MODEL {
     label 'gpu'
+    publishDir outputDir, mode: 'copy', overwrite: true
 
     input:
     path ref_h5ad
@@ -145,6 +148,8 @@ process SCANVI_TRAIN_MODEL {
     path shared_genes
 
     output:
+    path 'scvi_model', emit: scvi_model_dir
+    path 'scvi_model_metadata.json', emit: scvi_metadata
     path 'scanvi_model', emit: model_dir
     path 'scanvi_model_metadata.json', emit: metadata
 
@@ -181,6 +186,8 @@ process SCANVI_TRAIN_MODEL {
         ${(!useNfScviMetricsConfig && params.scanvi_train_validation_size != null) ? "--scanvi-train-validation-size ${params.scanvi_train_validation_size}" : ''} \
         ${(!useNfScviMetricsConfig && params.scanvi_train_early_stopping != null) ? "--scanvi-train-early-stopping ${params.scanvi_train_early_stopping}" : ''} \
         ${(!useNfScviMetricsConfig && params.scanvi_train_early_stopping_patience != null) ? "--scanvi-train-early-stopping-patience ${params.scanvi_train_early_stopping_patience}" : ''} \
+        --output-scvi-model-dir scvi_model \
+        --output-scvi-metadata scvi_model_metadata.json \
         --output-model-dir scanvi_model \
         --output-metadata scanvi_model_metadata.json \
         ${params.scvi_reference_model_dir ? "--scvi-model-dir ${scviReferenceModelDir}" : ''}
@@ -304,4 +311,25 @@ workflow {
     panhumanpy_predictions_ch = PANHUMANPY_ANNOTATE(query_h5ad_ch).predictions
 
     MERGE_ANNOTATIONS(query_h5ad_ch, celltypist_predictions_ch, scanvi_predictions_ch, scanvi_latent_ch, panhumanpy_predictions_ch)
+}
+
+workflow TRAIN_MODELS {
+    Channel
+        .value(refH5ad)
+        .set { ref_h5ad_ch }
+
+    Channel
+        .value(queryH5ad)
+        .set { query_h5ad_ch }
+
+    validation_outputs = VALIDATE_INPUTS(ref_h5ad_ch, query_h5ad_ch)
+    validation_manifest_ch = validation_outputs.manifest
+    shared_genes_ch = validation_outputs.shared_genes
+
+    if( celltypistMode == 'train' ) {
+        CELLTYPIST_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch, shared_genes_ch)
+    }
+    if( scanviMode == 'train' ) {
+        SCANVI_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch, shared_genes_ch)
+    }
 }

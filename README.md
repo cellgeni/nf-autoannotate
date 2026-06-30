@@ -14,15 +14,17 @@ The workflow is implemented in [main.nf](main.nf), with supporting Python script
 
 [prepare_scanpy_dataset.py](scripts/prepare_scanpy_dataset.py) is a utility script for creating local demo reference/query `.h5ad` files from a Scanpy dataset or an existing AnnData file.
 
-The pipeline stages are:
+The default workflow stages are:
 
 1. Validate the reference and query AnnData files, then write `validation_manifest.json` and `shared_genes.txt`.
 2. Train or load a CellTypist model.
-3. Train or load an scANVI model.
+3. Train or load scVI/scANVI reference models.
 4. Annotate the query with CellTypist.
-5. Annotate the query with scANVI.
+5. Annotate the query with scANVI query mapping.
 6. Annotate the query with PanHumanPy.
 7. Merge method outputs into the query `.h5ad` and write a cluster annotation summary.
+
+A training-only entry workflow is also available with `-entry TRAIN_MODELS`. It runs validation and model training, publishes CellTypist plus scVI/scANVI artifacts, and skips query annotation, PanHumanPy, and merge outputs.
 
 ## Required Inputs
 
@@ -200,18 +202,22 @@ If the query contains fewer than two clusters, the marker-gene TSV is still writ
 
 When `--marker_dotplot true`, the merge step writes `<project_tag>.cluster_marker_dotplot.png` with Scanpy `dotplot` using the top `--marker_dotplot_n_top` ranked genes per cluster from the same marker calculation. Set `--marker_dotplot false` to skip the PNG output while keeping the marker-gene TSV unchanged.
 
-Intermediate files remain in Nextflow work directories, including:
+The default workflow publishes final annotation outputs and model-training artifacts, including:
 
+- `<project_tag>.annotated.h5ad`
+- `<project_tag>.cluster_annotation_summary.csv`
+- `<project_tag>.cluster_marker_genes.tsv`
+- `<project_tag>.cluster_marker_dotplot.png` when marker dotplots are enabled
 - `validation_manifest.json`
 - `shared_genes.txt`
 - `celltypist_model.pkl`
 - `celltypist_model_metadata.json`
-- `celltypist_predictions.csv`
+- `scvi_model/`
+- `scvi_model_metadata.json`
 - `scanvi_model/`
 - `scanvi_model_metadata.json`
-- `scanvi_predictions.csv`
-- `scanvi_latent.h5ad`
-- `panhumanpy_predictions.csv`
+
+Intermediate annotation files remain in Nextflow work directories, including `celltypist_predictions.csv`, `scanvi_predictions.csv`, `scanvi_latent.h5ad`, and `panhumanpy_predictions.csv`.
 
 Nextflow timeline, report, and trace files are written under `autoannotate-reports-<project_tag>/`.
 
@@ -273,6 +279,21 @@ nextflow run main.nf \
   --ref_label_col cell_type \
   --batch_key donor \
   --query_cluster_col leiden
+```
+
+Train CellTypist plus scVI/scANVI model artifacts only:
+
+```bash
+module load cellgen/nextflow
+
+nextflow run main.nf -entry TRAIN_MODELS \
+  --ref_h5ad /path/to/reference.h5ad \
+  --query_h5ad /path/to/query.h5ad \
+  --project_tag model_training \
+  --ref_label_col cell_type \
+  --batch_key donor \
+  --query_cluster_col leiden \
+  --outdir results/model_training
 ```
 
 Reuse a pretrained CellTypist model while training scANVI:
