@@ -6,6 +6,9 @@
   "type": "object",
   "allOf": [
     {
+      "$ref": "#/$defs/tool_selection_options"
+    },
+    {
       "$ref": "#/$defs/input_output_options"
     },
     {
@@ -28,23 +31,50 @@
     }
   ],
   "$defs": {
+    "tool_selection_options": {
+      "title": "Tool selection options",
+      "type": "object",
+      "fa_icon": "fas fa-list-check",
+      "required": [
+        "tools"
+      ],
+      "properties": {
+        "tools": {
+          "type": [
+            "string",
+            "array"
+          ],
+          "description": "Annotation tools to run, as a comma-separated string or a YAML list. Any subset of celltypist, scanvi, panhumanpy.",
+          "pattern": "^\\s*(celltypist|scanvi|panhumanpy)\\s*(,\\s*(celltypist|scanvi|panhumanpy)\\s*)*$",
+          "items": {
+            "type": "string",
+            "enum": [
+              "celltypist",
+              "scanvi",
+              "panhumanpy"
+            ]
+          },
+          "minItems": 1
+        }
+      }
+    },
     "input_output_options": {
       "title": "Input and output options",
       "type": "object",
       "fa_icon": "fas fa-file",
       "required": [
-        "ref_h5ad",
         "query_h5ad",
-        "project_tag",
-        "ref_label_col"
+        "project_tag"
       ],
       "properties": {
         "ref_h5ad": {
-          "type": "string",
-          "description": "Reference AnnData .h5ad file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Reference AnnData .h5ad file. Required when tools includes celltypist or scanvi.",
           "format": "file-path",
-          "exists": true,
-          "minLength": 1
+          "exists": true
         },
         "query_h5ad": {
           "type": "string",
@@ -68,9 +98,11 @@
           "format": "directory-path"
         },
         "ref_label_col": {
-          "type": "string",
-          "description": "Reference obs column containing cell type labels.",
-          "minLength": 1
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Reference obs column containing cell type labels. Required when tools includes celltypist or scanvi."
         }
       }
     },

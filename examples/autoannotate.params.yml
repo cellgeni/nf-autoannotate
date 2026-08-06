@@ -1,7 +1,13 @@
 # Copy this file, edit values for a run, then launch with:
 # nextflow run main.nf -params-file your-run.params.yml
 
+# Annotation tools to run. Any subset of celltypist, scanvi, panhumanpy.
+# Accepts a comma-separated string or a YAML list.
+tools: celltypist,scanvi,panhumanpy
+
 # Required inputs
+# ref_h5ad and ref_label_col are only needed when tools includes celltypist or scanvi;
+# a panhumanpy-only run needs the query alone.
 ref_h5ad: /path/to/reference.h5ad
 query_h5ad: /path/to/query.h5ad
 project_tag: autoannotate_run

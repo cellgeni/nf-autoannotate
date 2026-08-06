@@ -8,6 +8,8 @@
 
 The pipeline writes the method outputs back into the original query AnnData object and produces a cluster-level summary table. It does not create a consensus label.
 
+All three methods run by default. Use `--tools` to run a subset, for example `--tools celltypist,panhumanpy`.
+
 ## Workflow
 
 The workflow is implemented in [main.nf](main.nf), with supporting Python scripts under [scripts/](scripts).
@@ -24,21 +26,43 @@ The default workflow stages are:
 6. Annotate the query with PanHumanPy.
 7. Merge method outputs into the query `.h5ad` and write a cluster annotation summary.
 
-A training-only entry workflow is also available with `-entry TRAIN_MODELS`. It runs validation and model training, publishes CellTypist plus scVI/scANVI artifacts, and skips query annotation, PanHumanPy, and merge outputs.
+Stages 2-6 only run for the tools named in `--tools`. Stages 1 and 7 always run, so a subset run still validates its inputs and still produces the annotated `.h5ad`, cluster summary, and marker gene outputs.
+
+A training-only entry workflow is also available with `-entry TRAIN_MODELS`. It runs validation and model training, publishes CellTypist plus scVI/scANVI artifacts, and skips query annotation, PanHumanPy, and merge outputs. It requires `--tools` to include at least one of `celltypist` or `scanvi`.
+
+## Tool Selection
+
+- `--tools`: annotation tools to run. Defaults to `celltypist,scanvi,panhumanpy`.
+
+Accepts any subset of `celltypist`, `scanvi`, and `panhumanpy`, as a comma-separated string on the command line or as either a string or a list in a `-params-file` YAML:
+
+```yaml
+tools: celltypist,panhumanpy
+# or
+tools:
+  - celltypist
+  - panhumanpy
+```
+
+Selecting a subset changes what the run requires and produces:
+
+- A reference is only needed by CellTypist and scANVI. `--tools panhumanpy` annotates the query on its own, so `--ref_h5ad` and `--ref_label_col` are not required and `shared_genes.txt` is not written.
+- The cluster annotation summary only contains columns for the tools that ran. The `celltypist_scanvi_*` agreement columns need both CellTypist and scANVI, so they are omitted otherwise.
+- Supplying an option for a tool that was not selected is an error rather than a silent no-op. For example `--tools panhumanpy --celltypist_model model.pkl` fails immediately.
 
 ## Required Inputs
 
-- `--ref_h5ad`: reference AnnData file.
 - `--query_h5ad`: query AnnData file to annotate.
 - `--project_tag`: output filename prefix.
-- `--ref_label_col`: reference `obs` column containing cell type labels.
+- `--ref_h5ad`: reference AnnData file. Required when `--tools` includes `celltypist` or `scanvi`.
+- `--ref_label_col`: reference `obs` column containing cell type labels. Required when `--tools` includes `celltypist` or `scanvi`.
 
 Optional reference filtering:
 
 - `--ref_filter_col`: reference `obs` column used to filter the reference before model training.
 - `--ref_filter_values`: comma-separated values to keep from `--ref_filter_col`, for example `E12,E14` or `treated,control`.
 
-`--ref_filter_col` and `--ref_filter_values` must be supplied together.
+`--ref_filter_col` and `--ref_filter_values` must be supplied together, and require `--tools` to include a reference-based tool.
 
 Run parameters are normally defined in a YAML file passed with `-params-file`. Start from [examples/autoannotate.params.yml](examples/autoannotate.params.yml), edit the values for your run, and launch the workflow with that file. Parameter defaults and runtime settings live in [nextflow.config](nextflow.config), and user-facing parameters are described and validated by [nextflow_schema.json](nextflow_schema.json).
 
@@ -122,7 +146,7 @@ Parameter defaults live in [nextflow.config](nextflow.config); user-facing param
 Before model steps run, the pipeline checks that:
 
 - input files exist
-- `ref_label_col` exists in `ref_h5ad.obs`
+- `ref_label_col` exists in `ref_h5ad.obs`, when a reference-based tool is selected
 - `batch_key`, if supplied, exists in both reference and query `obs`
 - all `scanvi_categorical_covariate_keys`, if supplied, exist in both objects
 - all `scanvi_continuous_covariate_keys`, if supplied, exist in both objects
@@ -134,6 +158,8 @@ Before model steps run, the pipeline checks that:
 - reference and query gene indices are unique
 - reference and query gene identifiers use the same broad scheme, such as symbols or Ensembl IDs
 - reference and query share at least one gene
+
+All reference-side checks are skipped when `--tools` selects no reference-based tool, so a `--tools panhumanpy` run validates the query alone.
 
 The merge step also validates that every annotation CSV has unique `cell_id` values matching `query.obs_names` exactly. Missing or extra cells now fail the merge instead of becoming silent `NaN` values.
 
@@ -147,6 +173,8 @@ Published files:
 - `<project_tag>.cluster_marker_dotplot.png` when `--marker_dotplot true` and at least two clusters are available
 
 The annotated `.h5ad` is the query object with additional `obs` columns and scANVI latent representations in `obsm`.
+
+The lists below describe a run with all three tools selected. A subset run only produces the columns and artifacts belonging to the tools named in `--tools`.
 
 Method columns copied into `query.obs`:
 
@@ -168,12 +196,12 @@ Latent representations copied into `query.obsm`:
 
 The latent arrays are written by `annotate_scanvi.py` to a separate `scanvi_latent.h5ad` artifact and merged into the final annotated `.h5ad`; the `scanvi_predictions.csv` table stays limited to per-cell labels and confidence scores.
 
-Comparison columns created in `query.obs`:
+Comparison columns created in `query.obs`, only when `--tools` includes both `celltypist` and `scanvi`:
 
 - `celltypist_scanvi_agree`: per-cell boolean; `true` only when both methods have non-missing labels and `celltypist_majority_voting` equals the scANVI label.
 - `celltypist_scanvi_cluster_agreement_fraction`: cluster-level fraction copied onto each cell in the cluster; the fraction of cells where `celltypist_scanvi_agree` is `true`.
 
-The cluster summary is grouped by `--query_cluster_col` and includes:
+The cluster summary is grouped by `--query_cluster_col`. Its columns depend on `--tools`: `<query_cluster_col>` and `n_cells` are always present, each selected tool contributes its own pair of columns, and the two `celltypist_scanvi_*` columns need both CellTypist and scANVI. With all three tools selected it includes:
 
 - `<query_cluster_col>`: cluster identifier.
 - `n_cells`: number of cells in the cluster.
@@ -202,7 +230,7 @@ If the query contains fewer than two clusters, the marker-gene TSV is still writ
 
 When `--marker_dotplot true`, the merge step writes `<project_tag>.cluster_marker_dotplot.png` with Scanpy `dotplot` using the top `--marker_dotplot_n_top` ranked genes per cluster from the same marker calculation. Set `--marker_dotplot false` to skip the PNG output while keeping the marker-gene TSV unchanged.
 
-The default workflow publishes final annotation outputs and model-training artifacts, including:
+With all three tools selected, the workflow publishes final annotation outputs and model-training artifacts, including:
 
 - `<project_tag>.annotated.h5ad`
 - `<project_tag>.cluster_annotation_summary.csv`
@@ -216,6 +244,8 @@ The default workflow publishes final annotation outputs and model-training artif
 - `scvi_model_metadata.json`
 - `scanvi_model/`
 - `scanvi_model_metadata.json`
+
+A subset run publishes only the artifacts of the tools it ran. `shared_genes.txt` is also omitted when no reference-based tool is selected.
 
 Intermediate annotation files remain in Nextflow work directories, including `celltypist_predictions.csv`, `scanvi_predictions.csv`, `scanvi_latent.h5ad`, and `panhumanpy_predictions.csv`.
 
@@ -338,6 +368,31 @@ nextflow run main.nf \
   --scvi_reference_model_dir /path/to/scvi_model_dir
 ```
 
+Run PanHumanPy only, with no reference dataset:
+
+```bash
+module load cellgen/nextflow
+
+nextflow run main.nf \
+  --tools panhumanpy \
+  --query_h5ad /path/to/query.h5ad \
+  --project_tag panhumanpy_only \
+  --query_cluster_col leiden
+```
+
+Run CellTypist and PanHumanPy, skipping the GPU scANVI steps:
+
+```bash
+module load cellgen/nextflow
+
+nextflow run main.nf \
+  --tools celltypist,panhumanpy \
+  --ref_h5ad /path/to/reference.h5ad \
+  --query_h5ad /path/to/query.h5ad \
+  --project_tag no_scanvi \
+  --ref_label_col cell_type
+```
+
 Allow the merge step to compute missing Leiden clusters:
 
 ```bash
@@ -356,5 +411,5 @@ nextflow run main.nf \
 - Input `.h5ad` files should already be normalized/preprocessed appropriately for the chosen annotation methods.
 - Gene alignment for CellTypist uses the reference-query intersection from validation. Fresh scANVI training starts from the shared gene set to build a reference model; query mapping follows the saved scANVI model registry.
 - PanHumanPy receives the original query feature space, optionally using `--panhumanpy_feature_names_col` for symbols.
-- CellTypist, scANVI, and PanHumanPy outputs are kept separate.
+- CellTypist, scANVI, and PanHumanPy outputs are kept separate, and each can be enabled or disabled independently with `--tools`.
 - PanHumanPy is not compared with CellTypist or scANVI because it uses a different reference.
