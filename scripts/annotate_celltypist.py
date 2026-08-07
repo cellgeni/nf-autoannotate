@@ -15,7 +15,6 @@ MIN_MODEL_GENE_OVERLAP_FRACTION = 0.8
 def parse_args():
     parser = argparse.ArgumentParser(description="Annotate query cells using a CellTypist model.")
     parser.add_argument("--query-h5ad", required=True)
-    parser.add_argument("--shared-genes", required=True)
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--output", required=True)
     return parser.parse_args()
@@ -58,11 +57,6 @@ def confidence_for_labels(probability_matrix: pd.DataFrame, labels: pd.Series) -
     return pd.Series(scores, index=probability_matrix.index, dtype=float)
 
 
-def read_gene_list(path: str) -> list[str]:
-    with open(path, "r", encoding="utf-8") as handle:
-        return [line.strip() for line in handle if line.strip()]
-
-
 def main():
     args = parse_args()
 
@@ -73,12 +67,9 @@ def main():
 
     model = celltypist.models.Model.load(args.model_path)
     model_genes = list(model.classifier.features)
-    shared_set = set(read_gene_list(args.shared_genes))
     query_gene_set = set(query.var_names)
     overlapping_genes = [gene for gene in model_genes if gene in query_gene_set]
     overlap_fraction = len(overlapping_genes) / len(model_genes) if model_genes else 0.0
-    if not any(gene in shared_set for gene in model_genes):
-        raise ValueError("No genes overlap between query input and CellTypist model features")
     if overlap_fraction < MIN_MODEL_GENE_OVERLAP_FRACTION:
         raise ValueError(
             "Only "

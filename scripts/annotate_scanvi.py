@@ -3,6 +3,7 @@
 import argparse
 import json
 import runpy
+import sys
 from pathlib import Path
 
 import anndata as ad
@@ -12,10 +13,12 @@ from scipy import sparse
 from scvi.model import SCANVI
 
 
+MIN_MODEL_GENE_OVERLAP_FRACTION = 0.8
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Annotate query cells using a trained scANVI model.")
     parser.add_argument("--query-h5ad", required=True)
-    parser.add_argument("--shared-genes", required=True)
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--label-column", required=True)
     parser.add_argument("--score-column", required=True)
@@ -147,17 +150,59 @@ def align_adata_to_gene_list(adata: ad.AnnData, genes: list[str]) -> ad.AnnData:
     return ad.AnnData(X=aligned_matrix, obs=adata.obs.copy(), var=pd.DataFrame(index=genes))
 
 
-def read_gene_list(path: str) -> list[str]:
-    with open(path, "r", encoding="utf-8") as handle:
-        return [line.strip() for line in handle if line.strip()]
+def load_gene_list(model_dir: str, query: ad.AnnData) -> list[str]:
+    """Return the gene space the model was trained on.
 
+    Only the model itself is authoritative. A reference gene list is not a valid
+    substitute: scVI keeps `hvg_n_top_genes` highly variable genes and CellTypist keeps a
+    per-label subset, so a model's registry is a strict subset of the reference, and
+    aligning a query to the wrong list silently scrambles the feature columns.
 
-def load_gene_list(model_dir: str, shared_genes_path: str) -> list[str]:
+    Metadata written by this pipeline is preferred because it avoids loading the model,
+    and scvi-tools' own registry is the fallback for externally trained directories.
+    """
     metadata_path = Path(model_dir) / "scanvi_model_metadata.json"
     if metadata_path.exists():
         with open(metadata_path, "r", encoding="utf-8") as handle:
-            return json.load(handle)["genes"]
-    return read_gene_list(shared_genes_path)
+            metadata = json.load(handle)
+        genes = metadata.get("genes")
+        if genes:
+            return list(genes)
+
+    try:
+        var_names = SCANVI.prepare_query_anndata(
+            query, model_dir, return_reference_var_names=True
+        )
+    except Exception as error:  # noqa: BLE001 - surfaced with actionable context below
+        raise ValueError(
+            f"Could not determine the gene space of the scANVI model in {model_dir}. It has no "
+            "scanvi_model_metadata.json from this pipeline, and reading the scvi-tools registry "
+            f"failed: {error}"
+        ) from error
+    return [str(name) for name in var_names]
+
+
+def report_gene_coverage(query: ad.AnnData, model_genes: list[str]) -> None:
+    if not model_genes:
+        return
+
+    query_gene_set = set(query.var_names)
+    covered = sum(1 for gene in model_genes if gene in query_gene_set)
+    fraction = covered / len(model_genes)
+    print(
+        f"scANVI model gene overlap: {covered}/{len(model_genes)} ({fraction:.1%})",
+        file=sys.stderr,
+    )
+    if covered == 0:
+        raise ValueError("No genes overlap between the query and the scANVI model gene space")
+    if fraction < MIN_MODEL_GENE_OVERLAP_FRACTION:
+        # Missing genes are zero-filled, which reads as "not detected" rather than
+        # "not measured" and degrades the latent representation.
+        print(
+            f"WARNING: only {fraction:.1%} of scANVI model genes are present in the query; "
+            "the remainder are zero-filled and predictions may be unreliable.",
+            file=sys.stderr,
+        )
 
 
 def ensure_scanvi_label_column(adata: ad.AnnData, metadata: dict) -> ad.AnnData:
@@ -211,6 +256,9 @@ def main():
         with open(metadata_path, "r", encoding="utf-8") as handle:
             metadata = json.load(handle)
 
+    model_genes = load_gene_list(args.model_dir, query)
+    report_gene_coverage(query, model_genes)
+
     if metadata.get("inference_mode") == "query_mapping":
         SCANVI.prepare_query_anndata(query, args.model_dir)
         scanvi = SCANVI.load_query_data(query, args.model_dir)
@@ -220,7 +268,6 @@ def main():
         soft = scanvi.predict(soft=True)
         latent = scanvi.get_latent_representation()
     else:
-        model_genes = load_gene_list(args.model_dir, args.shared_genes)
         active_query = align_adata_to_gene_list(query, model_genes)
         active_query = ensure_scanvi_label_column(active_query, metadata)
         scanvi = SCANVI.load(args.model_dir, adata=active_query)

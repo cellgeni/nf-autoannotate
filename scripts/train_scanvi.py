@@ -12,8 +12,7 @@ from scvi.model import SCANVI, SCVI
 def parse_args():
     parser = argparse.ArgumentParser(description="Train an scANVI reference model from a reference h5ad file.")
     parser.add_argument("--ref-h5ad", required=True)
-    parser.add_argument("--validation-manifest", required=True)
-    parser.add_argument("--shared-genes", required=True)
+    parser.add_argument("--reference-manifest", required=True)
     parser.add_argument("--ref-label-col", required=True)
     parser.add_argument("--batch-key")
     parser.add_argument("--categorical-covariate-keys")
@@ -70,11 +69,6 @@ def apply_reference_filter(adata: ad.AnnData, manifest: dict) -> ad.AnnData:
     if filtered.n_obs == 0:
         raise ValueError("Reference filtering removed all cells before scANVI training")
     return filtered
-
-
-def read_gene_list(path: str) -> list[str]:
-    with open(path, "r", encoding="utf-8") as handle:
-        return [line.strip() for line in handle if line.strip()]
 
 
 def parse_comma_separated(raw_values: str | None) -> list[str]:
@@ -293,7 +287,7 @@ def main():
     setup_params = normalize_setup_params(training_config["param_input"])
     effective_batch_key = setup_params.get("batch_key")
 
-    with open(args.validation_manifest, "r", encoding="utf-8") as handle:
+    with open(args.reference_manifest, "r", encoding="utf-8") as handle:
         manifest = json.load(handle)
 
     ref = ad.read_h5ad(args.ref_h5ad)
@@ -313,9 +307,8 @@ def main():
         genes = ref.var_names.tolist()
         inference_mode = "query_mapping"
     else:
-        shared_genes = read_gene_list(args.shared_genes)
-        ref = ref[:, shared_genes].copy()
-
+        # HVG selection runs over the full reference gene space so the model stays
+        # independent of any particular query.
         ref.obs["_scanvi_label"] = ref.obs[args.ref_label_col].astype(str)
         ref = subset_to_hvgs(ref, args.hvg_n_top_genes, effective_batch_key)
         SCVI.setup_anndata(ref, **setup_params)

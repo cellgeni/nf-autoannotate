@@ -11,8 +11,7 @@ import numpy as np
 def parse_args():
     parser = argparse.ArgumentParser(description="Train a CellTypist model from a reference h5ad.")
     parser.add_argument("--ref-h5ad", required=True)
-    parser.add_argument("--validation-manifest", required=True)
-    parser.add_argument("--shared-genes", required=True)
+    parser.add_argument("--reference-manifest", required=True)
     parser.add_argument("--ref-label-col", required=True)
     parser.add_argument("--output-model", required=True)
     parser.add_argument("--output-metadata", required=True)
@@ -80,15 +79,10 @@ def apply_reference_filter(adata: sc.AnnData, manifest: dict) -> sc.AnnData:
     return filtered
 
 
-def read_gene_list(path: str) -> list[str]:
-    with open(path, "r", encoding="utf-8") as handle:
-        return [line.strip() for line in handle if line.strip()]
-
-
 def main():
     args = parse_args()
 
-    with open(args.validation_manifest, "r", encoding="utf-8") as handle:
+    with open(args.reference_manifest, "r", encoding="utf-8") as handle:
         manifest = json.load(handle)
 
     ref = sc.read_h5ad(args.ref_h5ad)
@@ -96,8 +90,10 @@ def main():
     sc.pp.normalize_total(ref, target_sum=1e4)
     sc.pp.log1p(ref)
     ref = apply_reference_filter(ref, manifest)
-    shared_genes = read_gene_list(args.shared_genes)
-    ref = ref[:, shared_genes].copy()
+
+    # Training uses the full reference gene space so one model can annotate any
+    # number of queries; each query is aligned to the model's genes at annotation.
+    reference_gene_count = ref.n_vars
 
     training_adata = ref
     selected_genes = ref.var_names.tolist()
@@ -137,7 +133,7 @@ def main():
         "training_mode": args.training_mode,
         "ref_filter_col": manifest.get("ref_filter_col"),
         "ref_filter_values": manifest.get("ref_filter_values", []),
-        "shared_gene_count": len(shared_genes),
+        "reference_gene_count": reference_gene_count,
         "balanced_cell_count": balanced_cell_count,
         "feature_selection": feature_selection_used,
         "feature_selection_top_genes": args.feature_selection_top_genes if feature_selection_used else None,

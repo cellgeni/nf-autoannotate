@@ -132,7 +132,6 @@ process CELLTYPIST_TRAIN_MODEL {
     input:
     path ref_h5ad
     path validation_manifest
-    path shared_genes
 
     output:
     path 'celltypist_model.pkl', emit: model
@@ -142,8 +141,7 @@ process CELLTYPIST_TRAIN_MODEL {
     """
     python3 ${projectDir}/scripts/train_celltypist.py \
         --ref-h5ad ${ref_h5ad} \
-        --validation-manifest ${validation_manifest} \
-        --shared-genes ${shared_genes} \
+        --reference-manifest ${validation_manifest} \
         --ref-label-col '${params.ref_label_col}' \
         --output-model celltypist_model.pkl \
         --output-metadata celltypist_model_metadata.json \
@@ -162,7 +160,6 @@ process CELLTYPIST_ANNOTATE {
 
     input:
     path query_h5ad
-    path shared_genes
     path celltypist_model
 
     output:
@@ -172,7 +169,6 @@ process CELLTYPIST_ANNOTATE {
     """
     python3 ${projectDir}/scripts/annotate_celltypist.py \
         --query-h5ad ${query_h5ad} \
-        --shared-genes ${shared_genes} \
         --model-path ${celltypist_model} \
         --output celltypist_predictions.csv
     """
@@ -185,7 +181,6 @@ process SCANVI_TRAIN_MODEL {
     input:
     path ref_h5ad
     path validation_manifest
-    path shared_genes
 
     output:
     path 'scvi_model', emit: scvi_model_dir
@@ -197,8 +192,7 @@ process SCANVI_TRAIN_MODEL {
     """
     python3 ${projectDir}/scripts/train_scanvi.py \
         --ref-h5ad ${ref_h5ad} \
-        --validation-manifest ${validation_manifest} \
-        --shared-genes ${shared_genes} \
+        --reference-manifest ${validation_manifest} \
         --ref-label-col '${params.ref_label_col}' \
         ${(!useNfScviMetricsConfig && params.batch_key) ? "--batch-key '${params.batch_key}'" : ''} \
         ${(!useNfScviMetricsConfig && params.scanvi_categorical_covariate_keys) ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
@@ -239,7 +233,6 @@ process SCANVI_ANNOTATE {
 
     input:
     path query_h5ad
-    path shared_genes
     path scanvi_model_dir
 
     output:
@@ -250,7 +243,6 @@ process SCANVI_ANNOTATE {
     """
     python3 ${projectDir}/scripts/annotate_scanvi.py \
         --query-h5ad ${query_h5ad} \
-        --shared-genes ${shared_genes} \
         --model-dir ${scanvi_model_dir} \
         --label-column '${params.scanvi_obs_col}' \
         --score-column '${params.scanvi_score_col}' \
@@ -334,24 +326,23 @@ workflow {
 
     validation_outputs = VALIDATE_INPUTS(ref_h5ad_ch, query_h5ad_ch)
     validation_manifest_ch = validation_outputs.manifest
-    shared_genes_ch = validation_outputs.shared_genes
 
     annotation_channels = []
 
     if( runCelltypist ) {
         celltypist_model_ch = celltypistMode == 'pretrained'
             ? Channel.value(file(params.celltypist_model, checkIfExists: true))
-            : CELLTYPIST_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch, shared_genes_ch).model
+            : CELLTYPIST_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch).model
 
-        annotation_channels << CELLTYPIST_ANNOTATE(query_h5ad_ch, shared_genes_ch, celltypist_model_ch).predictions
+        annotation_channels << CELLTYPIST_ANNOTATE(query_h5ad_ch, celltypist_model_ch).predictions
     }
 
     if( runScanvi ) {
         scanvi_model_ch = scanviMode == 'pretrained'
             ? Channel.value(file(params.scanvi_model_dir, checkIfExists: true))
-            : SCANVI_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch, shared_genes_ch).model_dir
+            : SCANVI_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch).model_dir
 
-        scanvi_annotation_outputs = SCANVI_ANNOTATE(query_h5ad_ch, shared_genes_ch, scanvi_model_ch)
+        scanvi_annotation_outputs = SCANVI_ANNOTATE(query_h5ad_ch, scanvi_model_ch)
         annotation_channels << scanvi_annotation_outputs.predictions
         annotation_channels << scanvi_annotation_outputs.latent
     }
@@ -387,12 +378,11 @@ workflow TRAIN_MODELS {
 
     validation_outputs = VALIDATE_INPUTS(ref_h5ad_ch, query_h5ad_ch)
     validation_manifest_ch = validation_outputs.manifest
-    shared_genes_ch = validation_outputs.shared_genes
 
     if( runCelltypist && celltypistMode == 'train' ) {
-        CELLTYPIST_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch, shared_genes_ch)
+        CELLTYPIST_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch)
     }
     if( runScanvi && scanviMode == 'train' ) {
-        SCANVI_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch, shared_genes_ch)
+        SCANVI_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch)
     }
 }
