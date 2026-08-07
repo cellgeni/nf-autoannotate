@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 
-import argparse
-import json
+"""Shared validation helpers used by validate_reference.py and validate_query.py."""
+
 import re
 import runpy
 
 import h5py
 import numpy as np
-from pathlib import Path
 
 import anndata as ad
 
@@ -19,24 +18,16 @@ TOOL_CHOICES = ("celltypist", "scanvi", "panhumanpy")
 REFERENCE_TOOLS = frozenset({"celltypist", "scanvi"})
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Validate reference/query h5ad inputs.")
-    parser.add_argument("--ref-h5ad")
-    parser.add_argument("--query-h5ad", required=True)
-    parser.add_argument("--ref-label-col")
-    parser.add_argument("--tools", default=",".join(TOOL_CHOICES))
-    parser.add_argument("--batch-key")
-    parser.add_argument("--categorical-covariate-keys")
-    parser.add_argument("--continuous-covariate-keys")
-    parser.add_argument("--nf-scvi-metrics-config")
-    parser.add_argument("--panhumanpy-feature-names-col")
-    parser.add_argument("--query-cluster-col", required=True)
-    parser.add_argument("--compute-missing-clusters", action="store_true")
-    parser.add_argument("--ref-filter-col")
-    parser.add_argument("--ref-filter-values")
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--shared-genes-output", required=True)
-    return parser.parse_args()
+def parse_tools(raw_tools: str | None) -> set[str]:
+    tools = {value.strip().lower() for value in (raw_tools or "").split(",") if value.strip()}
+    unknown = sorted(tools - set(TOOL_CHOICES))
+    if unknown:
+        raise ValueError(
+            f"Unknown --tools entries: {', '.join(unknown)}. Expected one of: {', '.join(TOOL_CHOICES)}"
+        )
+    if not tools:
+        raise ValueError(f"--tools must name at least one of: {', '.join(TOOL_CHOICES)}")
+    return tools
 
 
 def matrix_value_dataset(handle: h5py.File, label: str) -> h5py.Dataset:
@@ -284,72 +275,8 @@ def load_nf_scvi_metrics_config(path: str | None) -> dict[str, dict]:
     return {"param_input": param_input}
 
 
-def parse_tools(raw_tools: str | None) -> set[str]:
-    tools = {value.strip().lower() for value in (raw_tools or "").split(",") if value.strip()}
-    unknown = sorted(tools - set(TOOL_CHOICES))
-    if unknown:
-        raise ValueError(
-            f"Unknown --tools entries: {', '.join(unknown)}. Expected one of: {', '.join(TOOL_CHOICES)}"
-        )
-    if not tools:
-        raise ValueError(f"--tools must name at least one of: {', '.join(TOOL_CHOICES)}")
-    return tools
-
-
-def resolve_reference_filter(args: argparse.Namespace) -> tuple[str | None, list[str]]:
-    filter_col = args.ref_filter_col
-    filter_values = parse_filter_values(args.ref_filter_values)
-    if (filter_col and not filter_values) or (not filter_col and filter_values):
-        raise ValueError("Both --ref-filter-col and --ref-filter-values are required together")
-    return filter_col, filter_values
-
-
-def require_query_cluster_column(
-    query: ad.AnnData,
-    query_cluster_col: str,
-    compute_missing_clusters: bool,
-) -> None:
-    if compute_missing_clusters:
-        return
-    require_obs_column(query, query_cluster_col, "query h5ad")
-
-
-def main():
-    args = parse_args()
-
-    tools = parse_tools(args.tools)
-    needs_reference = bool(REFERENCE_TOOLS & tools)
-
-    query_path = Path(args.query_h5ad)
-    if not query_path.exists():
-        raise FileNotFoundError(f"Query h5ad not found: {query_path}")
-
-    ref_path = None
-    if needs_reference:
-        if not args.ref_h5ad:
-            raise ValueError(
-                "--ref-h5ad is required when the selected tools include "
-                f"{', '.join(sorted(REFERENCE_TOOLS & tools))}"
-            )
-        if not args.ref_label_col:
-            raise ValueError(
-                "--ref-label-col is required when the selected tools include "
-                f"{', '.join(sorted(REFERENCE_TOOLS & tools))}"
-            )
-        ref_path = Path(args.ref_h5ad)
-        if not ref_path.exists():
-            raise FileNotFoundError(f"Reference h5ad not found: {ref_path}")
-
-    with h5py.File(query_path, "r") as query_handle:
-        require_raw_count_matrix(query_handle, "query h5ad")
-
-    ref = ad.read_h5ad(ref_path, backed="r") if needs_reference else None
-    query = ad.read_h5ad(query_path, backed="r")
-
-    if needs_reference:
-        require_obs_column(ref, args.ref_label_col, "reference h5ad")
-
-    nf_scvi_metrics_config = load_nf_scvi_metrics_config(args.nf_scvi_metrics_config)
+def resolve_setup_keys(args, nf_scvi_metrics_config: dict) -> tuple:
+    """Resolve layer, batch key, and covariate keys from either the config file or CLI flags."""
     config_param_input = nf_scvi_metrics_config.get("param_input", {})
     layer = config_param_input.get("layer") if nf_scvi_metrics_config else None
     batch_key = config_param_input.get("batch_key") if nf_scvi_metrics_config else args.batch_key
@@ -370,121 +297,22 @@ def main():
         else parse_comma_separated(args.continuous_covariate_keys)
     )
 
-    if "scanvi" not in tools and (
-        layer or batch_key or categorical_covariate_keys or continuous_covariate_keys
-    ):
-        raise ValueError("scVI/scANVI setup options were provided but 'scanvi' is not among the selected tools")
-
     if isinstance(layer, (list, tuple, set, dict)):
         raise ValueError("param_input.layer must be a single layer name")
-    if layer:
-        if layer not in ref.layers:
-            raise ValueError(f"Missing required layer '{layer}' in reference h5ad")
-        if layer not in query.layers:
-            raise ValueError(f"Missing required layer '{layer}' in query h5ad")
-
     if isinstance(batch_key, (list, tuple, set, dict)):
         raise ValueError("param_input.batch_key must be a single column name")
-    if batch_key:
-        require_obs_column(ref, batch_key, "reference h5ad")
-        require_obs_column(query, batch_key, "query h5ad")
-
     if batch_key and batch_key in categorical_covariate_keys:
         raise ValueError("categorical covariate keys should contain additional columns, not the batch key")
-    for covariate_key in categorical_covariate_keys:
-        require_obs_column(ref, covariate_key, "reference h5ad")
-        require_obs_column(query, covariate_key, "query h5ad")
 
-    for covariate_key in continuous_covariate_keys:
-        require_obs_column(ref, covariate_key, "reference h5ad")
-        require_obs_column(query, covariate_key, "query h5ad")
-
-    if args.panhumanpy_feature_names_col:
-        if "panhumanpy" not in tools:
-            raise ValueError(
-                "--panhumanpy-feature-names-col was provided but 'panhumanpy' is not among the selected tools"
-            )
-        if args.panhumanpy_feature_names_col not in query.var:
-            raise ValueError(
-                f"Missing required var column '{args.panhumanpy_feature_names_col}' in query h5ad"
-            )
-    require_query_cluster_column(query, args.query_cluster_col, args.compute_missing_clusters)
-
-    require_unique_index(query, "Query")
-    require_unique_var_index(query, "Query")
-
-    ref_filter_col, ref_filter_values = resolve_reference_filter(args)
-    if ref_filter_col and not needs_reference:
-        raise ValueError("Reference filtering was requested but no reference-based tool is selected")
-
-    ref_gene_id_type = None
-    shared_genes = None
-    ref_cell_count = None
-    filtered_ref_cell_count = None
-
-    if needs_reference:
-        require_unique_index(ref, "Reference")
-        require_unique_var_index(ref, "Reference")
-
-        ref_cell_count = int(ref.n_obs)
-        filtered_ref_cell_count = ref_cell_count
-        if ref_filter_col:
-            require_obs_column(ref, ref_filter_col, "reference h5ad")
-            available_filter_values = sorted({str(value) for value in ref.obs[ref_filter_col].astype(str)})
-            missing_filter_values = sorted(set(ref_filter_values) - set(available_filter_values))
-            if missing_filter_values:
-                raise ValueError(
-                    "Requested reference filter values were not found in "
-                    f"'{ref_filter_col}': {', '.join(missing_filter_values)}"
-                )
-            filtered_ref_cell_count = int(ref.obs[ref_filter_col].astype(str).isin(ref_filter_values).sum())
-            if filtered_ref_cell_count == 0:
-                raise ValueError("Reference filtering removed all cells")
-
-        ref_gene_id_type = infer_gene_id_type(ref.var_names)
-        query_gene_id_type = infer_gene_id_type(query.var_names)
-        if ref_gene_id_type != query_gene_id_type:
-            raise ValueError(
-                "Reference and query use different gene identifier types: "
-                f"reference={ref_gene_id_type}, query={query_gene_id_type}. "
-                "Make sure both h5ad files use the same identifier scheme."
-            )
-
-        query_genes = set(query.var_names)
-        shared_genes = [gene for gene in ref.var_names if gene in query_genes]
-        if not shared_genes:
-            raise ValueError("Reference and query h5ad files do not share any genes")
-
-    manifest = {
-        "tools": sorted(tools),
-        "ref_h5ad": str(ref_path.resolve()) if ref_path else None,
-        "query_h5ad": str(query_path.resolve()),
-        "ref_label_col": args.ref_label_col if needs_reference else None,
-        "batch_key": batch_key,
-        "categorical_covariate_keys": categorical_covariate_keys,
-        "continuous_covariate_keys": continuous_covariate_keys,
-        "panhumanpy_feature_names_col": args.panhumanpy_feature_names_col,
-        "query_cluster_col": args.query_cluster_col,
-        "compute_missing_clusters": args.compute_missing_clusters,
-        "ref_filter_col": ref_filter_col,
-        "ref_filter_values": ref_filter_values,
-        "gene_id_type": ref_gene_id_type,
-        "shared_gene_count": len(shared_genes) if shared_genes is not None else None,
-        "ref_cell_count": ref_cell_count,
-        "filtered_ref_cell_count": filtered_ref_cell_count,
-        "query_cell_count": int(query.n_obs),
-    }
-
-    with open(args.output, "w", encoding="utf-8") as handle:
-        json.dump(manifest, handle, indent=2)
-
-    # Downstream training/annotation processes only consume the shared-gene list when a
-    # reference is involved, so a query-only run leaves the file unwritten.
-    if shared_genes is not None:
-        with open(args.shared_genes_output, "w", encoding="utf-8") as handle:
-            handle.write("\n".join(shared_genes))
-            handle.write("\n")
+    return layer, batch_key, categorical_covariate_keys, continuous_covariate_keys
 
 
-if __name__ == "__main__":
-    main()
+def read_gene_list(path: str) -> list[str]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip()]
+
+
+def write_gene_list(path: str, genes: list[str]) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(genes))
+        handle.write("\n")

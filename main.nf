@@ -21,27 +21,60 @@ if( !selectedTools ) {
 def runCelltypist = selectedTools.contains('celltypist')
 def runScanvi = selectedTools.contains('scanvi')
 def runPanhumanpy = selectedTools.contains('panhumanpy')
-def needsReference = runCelltypist || runScanvi
 def toolsArg = selectedTools.sort().join(',')
 
 def celltypistMode = params.celltypist_model ? 'pretrained' : 'train'
 def scanviMode = params.scanvi_model_dir ? 'pretrained' : 'train'
 
+// A pretrained model carries its own feature space, so the reference is only strictly
+// required when something is actually trained from it. It stays useful when supplied
+// anyway, since it is what the per-query gene coverage diagnostic compares against.
+def trainsCelltypist = runCelltypist && celltypistMode == 'train'
+def trainsScanvi = runScanvi && scanviMode == 'train'
+def needsReference = trainsCelltypist || trainsScanvi
+def useReference = needsReference || (params.ref_h5ad as boolean)
+
 if( !params.project_tag ) {
     error "Missing required parameter: --project_tag"
 }
-if( !params.query_h5ad ) {
-    error "Missing required parameter: --query_h5ad"
-}
 if( needsReference && !params.ref_h5ad ) {
-    error "Missing required parameter: --ref_h5ad. It is required when --tools includes celltypist or scanvi"
+    error "Missing required parameter: --ref_h5ad. It is required when a reference-based tool is trained (celltypist or scanvi without a pretrained model)"
 }
-if( needsReference && !params.ref_label_col ) {
-    error "Missing required parameter: --ref_label_col. It is required when --tools includes celltypist or scanvi"
+if( useReference && !params.ref_label_col ) {
+    error "Missing required parameter: --ref_label_col. It is required whenever a reference h5ad is used"
 }
 
-def refH5ad = needsReference ? file(params.ref_h5ad, checkIfExists: true) : null
-def queryH5ad = file(params.query_h5ad, checkIfExists: true)
+def refH5ad = useReference ? file(params.ref_h5ad, checkIfExists: true) : null
+
+// query_h5ad accepts a single path, a glob, or a list of either. Resolve it eagerly so
+// that an empty match or a sample-ID collision fails before any task is submitted. It is
+// left unresolved for the TRAIN_MODELS entry point, which never reads a query.
+def sampleIdPattern = ~/^[A-Za-z0-9][A-Za-z0-9._-]*$/
+def queryFiles = []
+if( params.query_h5ad ) {
+    def queryPatterns = params.query_h5ad instanceof Collection ? params.query_h5ad : [params.query_h5ad]
+    queryFiles = queryPatterns.collectMany { pattern ->
+        def resolved = file(pattern.toString(), checkIfExists: true)
+        resolved instanceof Collection ? resolved.toList() : [resolved]
+    }
+    // Sorted so channel order, staging order, and -resume hashes do not depend on the
+    // order the filesystem happened to return glob matches in.
+    queryFiles = queryFiles.sort { it.toString() }
+    if( !queryFiles ) {
+        error "No query h5ad files matched --query_h5ad"
+    }
+    // Sample IDs are interpolated into output paths and shell arguments, so keep them to
+    // characters that cannot escape a directory or break out of a quoted argument.
+    def invalidSampleIds = queryFiles.collect { it.baseName }.findAll { !sampleIdPattern.matcher(it).matches() }
+    if( invalidSampleIds ) {
+        error "Query filenames produce unusable sample IDs: ${invalidSampleIds.sort().unique().join(', ')}. A sample ID is the filename without its final extension and must match ${sampleIdPattern}."
+    }
+    def duplicateSampleIds = queryFiles.groupBy { it.baseName }.findAll { id, files -> files.size() > 1 }
+    if( duplicateSampleIds ) {
+        error "Query files produce duplicate sample IDs: ${duplicateSampleIds.keySet().sort().join(', ')}. Sample IDs come from the filename without its extension, so rename the conflicting files."
+    }
+}
+def querySamples = queryFiles.collect { [it.baseName, it] }
 def scviReferenceModelDir = params.scvi_reference_model_dir ? file(params.scvi_reference_model_dir, checkIfExists: true) : null
 def nfScviMetricsConfig = params.nf_scvi_metrics_config ? file(params.nf_scvi_metrics_config, checkIfExists: true) : null
 def useNfScviMetricsConfig = params.nf_scvi_metrics_config ? true : false
@@ -67,7 +100,7 @@ if( !runPanhumanpy && params.panhumanpy_feature_names_col ) {
     error "--panhumanpy_feature_names_col was provided but 'panhumanpy' is not in --tools"
 }
 if( !needsReference && (refFilterCol || refFilterValues) ) {
-    error "Reference filtering was requested but --tools selects no reference-based tool (celltypist, scanvi)"
+    error "Reference filtering was requested but no reference-based tool is being trained; filtering only affects model training"
 }
 
 if( (refFilterCol && !refFilterValues) || (!refFilterCol && refFilterValues) ) {
@@ -92,25 +125,55 @@ if( params.marker_dotplot_n_top.toInteger() < 1 ) {
     error "Invalid --marker_dotplot_n_top ${params.marker_dotplot_n_top}. Expected a positive integer"
 }
 
-process VALIDATE_INPUTS {
+process VALIDATE_REFERENCE {
     label 'validation'
     publishDir outputDir, mode: 'copy', overwrite: true
 
     input:
     path ref_h5ad
-    path query_h5ad
 
     output:
-    path 'validation_manifest.json', emit: manifest
-    path 'shared_genes.txt', emit: shared_genes, optional: true
+    path 'reference_manifest.json', emit: manifest
+    path 'reference_genes.txt', emit: genes
 
     script:
     """
-    python3 ${projectDir}/scripts/validate_inputs.py \
-        --tools '${toolsArg}' \
-        ${needsReference ? "--ref-h5ad ${ref_h5ad}" : ''} \
+    python3 ${projectDir}/scripts/validate_reference.py \
+        --ref-h5ad ${ref_h5ad} \
+        --ref-label-col '${params.ref_label_col}' \
+        ${(runScanvi && !useNfScviMetricsConfig && params.batch_key) ? "--batch-key '${params.batch_key}'" : ''} \
+        ${(runScanvi && !useNfScviMetricsConfig && params.scanvi_categorical_covariate_keys) ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
+        ${(runScanvi && !useNfScviMetricsConfig && params.scanvi_continuous_covariate_keys) ? "--continuous-covariate-keys '${params.scanvi_continuous_covariate_keys}'" : ''} \
+        ${useNfScviMetricsConfig ? "--nf-scvi-metrics-config ${nfScviMetricsConfig}" : ''} \
+        ${refFilterCol ? "--ref-filter-col '${refFilterCol}'" : ''} \
+        ${refFilterValues ? "--ref-filter-values '${refFilterValues}'" : ''} \
+        --output reference_manifest.json \
+        --genes-output reference_genes.txt
+    """
+}
+
+process VALIDATE_QUERY {
+    label 'validation'
+    tag "${sample_id}"
+    publishDir "${outputDir}/${sample_id}", mode: 'copy', overwrite: true
+
+    input:
+    tuple val(sample_id), path(query_h5ad)
+    // Empty lists when no reference-based tool is selected.
+    path reference_genes
+    path reference_manifest
+
+    output:
+    tuple val(sample_id), path("${sample_id}.query_manifest.json"), emit: manifest
+
+    script:
+    """
+    python3 ${projectDir}/scripts/validate_query.py \
         --query-h5ad ${query_h5ad} \
-        ${needsReference ? "--ref-label-col '${params.ref_label_col}'" : ''} \
+        --sample-id '${sample_id}' \
+        --tools '${toolsArg}' \
+        ${useReference ? "--reference-genes ${reference_genes}" : ''} \
+        ${useReference ? "--reference-manifest ${reference_manifest}" : ''} \
         ${(runScanvi && !useNfScviMetricsConfig && params.batch_key) ? "--batch-key '${params.batch_key}'" : ''} \
         ${(runScanvi && !useNfScviMetricsConfig && params.scanvi_categorical_covariate_keys) ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
         ${(runScanvi && !useNfScviMetricsConfig && params.scanvi_continuous_covariate_keys) ? "--continuous-covariate-keys '${params.scanvi_continuous_covariate_keys}'" : ''} \
@@ -118,10 +181,7 @@ process VALIDATE_INPUTS {
         ${(runPanhumanpy && params.panhumanpy_feature_names_col) ? "--panhumanpy-feature-names-col '${params.panhumanpy_feature_names_col}'" : ''} \
         --query-cluster-col '${params.query_cluster_col}' \
         ${params.compute_missing_clusters ? '--compute-missing-clusters' : ''} \
-        ${refFilterCol ? "--ref-filter-col '${refFilterCol}'" : ''} \
-        ${refFilterValues ? "--ref-filter-values '${refFilterValues}'" : ''} \
-        --output validation_manifest.json \
-        --shared-genes-output shared_genes.txt
+        --output ${sample_id}.query_manifest.json
     """
 }
 
@@ -131,7 +191,7 @@ process CELLTYPIST_TRAIN_MODEL {
 
     input:
     path ref_h5ad
-    path validation_manifest
+    path reference_manifest
 
     output:
     path 'celltypist_model.pkl', emit: model
@@ -141,7 +201,7 @@ process CELLTYPIST_TRAIN_MODEL {
     """
     python3 ${projectDir}/scripts/train_celltypist.py \
         --ref-h5ad ${ref_h5ad} \
-        --reference-manifest ${validation_manifest} \
+        --reference-manifest ${reference_manifest} \
         --ref-label-col '${params.ref_label_col}' \
         --output-model celltypist_model.pkl \
         --output-metadata celltypist_model_metadata.json \
@@ -157,13 +217,14 @@ process CELLTYPIST_TRAIN_MODEL {
 
 process CELLTYPIST_ANNOTATE {
     label 'normal'
+    tag "${sample_id}"
 
     input:
-    path query_h5ad
+    tuple val(sample_id), path(query_h5ad)
     path celltypist_model
 
     output:
-    path 'celltypist_predictions.csv', emit: predictions
+    tuple val(sample_id), path('celltypist_predictions.csv'), emit: predictions
 
     script:
     """
@@ -180,7 +241,7 @@ process SCANVI_TRAIN_MODEL {
 
     input:
     path ref_h5ad
-    path validation_manifest
+    path reference_manifest
 
     output:
     path 'scvi_model', emit: scvi_model_dir
@@ -192,7 +253,7 @@ process SCANVI_TRAIN_MODEL {
     """
     python3 ${projectDir}/scripts/train_scanvi.py \
         --ref-h5ad ${ref_h5ad} \
-        --reference-manifest ${validation_manifest} \
+        --reference-manifest ${reference_manifest} \
         --ref-label-col '${params.ref_label_col}' \
         ${(!useNfScviMetricsConfig && params.batch_key) ? "--batch-key '${params.batch_key}'" : ''} \
         ${(!useNfScviMetricsConfig && params.scanvi_categorical_covariate_keys) ? "--categorical-covariate-keys '${params.scanvi_categorical_covariate_keys}'" : ''} \
@@ -230,14 +291,15 @@ process SCANVI_TRAIN_MODEL {
 
 process SCANVI_ANNOTATE {
     label 'gpu'
+    tag "${sample_id}"
 
     input:
-    path query_h5ad
+    tuple val(sample_id), path(query_h5ad)
     path scanvi_model_dir
 
     output:
-    path 'scanvi_predictions.csv', emit: predictions
-    path 'scanvi_latent.h5ad', emit: latent
+    tuple val(sample_id), path('scanvi_predictions.csv'), emit: predictions
+    tuple val(sample_id), path('scanvi_latent.h5ad'), emit: latent
 
     script:
     """
@@ -261,12 +323,13 @@ process SCANVI_ANNOTATE {
 
 process PANHUMANPY_ANNOTATE {
     label 'normal'
+    tag "${sample_id}"
 
     input:
-    path query_h5ad
+    tuple val(sample_id), path(query_h5ad)
 
     output:
-    path 'panhumanpy_predictions.csv', emit: predictions
+    tuple val(sample_id), path('panhumanpy_predictions.csv'), emit: predictions
 
     script:
     """
@@ -279,21 +342,22 @@ process PANHUMANPY_ANNOTATE {
 
 process MERGE_ANNOTATIONS {
     label 'normal'
-    publishDir outputDir, mode: 'copy', overwrite: true
+    tag "${sample_id}"
+    publishDir "${outputDir}/${sample_id}", mode: 'copy', overwrite: true
 
     input:
-    path query_h5ad
     // Per-tool prediction files, staged under the fixed names declared by the
     // annotation processes. Only the selected tools contribute entries.
-    path annotation_files
+    tuple val(sample_id), path(query_h5ad), path(annotation_files)
 
     output:
-    path "${params.project_tag}.annotated.h5ad", emit: h5ad
-    path "${params.project_tag}.cluster_annotation_summary.csv", emit: cluster_summary
-    path "${params.project_tag}.cluster_marker_genes.tsv", emit: marker_genes
-    path "${params.project_tag}.cluster_marker_dotplot.png", emit: marker_dotplot, optional: true
+    tuple val(sample_id), path("${params.project_tag}.${sample_id}.annotated.h5ad"), emit: h5ad
+    path "${params.project_tag}.${sample_id}.cluster_annotation_summary.csv", emit: cluster_summary
+    path "${params.project_tag}.${sample_id}.cluster_marker_genes.tsv", emit: marker_genes
+    path "${params.project_tag}.${sample_id}.cluster_marker_dotplot.png", emit: marker_dotplot, optional: true
 
     script:
+    def prefix = "${params.project_tag}.${sample_id}"
     """
     python3 ${projectDir}/scripts/merge_annotations.py \
         --query-h5ad ${query_h5ad} \
@@ -304,67 +368,94 @@ process MERGE_ANNOTATIONS {
         --scanvi-label-column '${params.scanvi_obs_col}' \
         --scanvi-score-column '${params.scanvi_score_col}' \
         ${params.compute_missing_clusters ? '--compute-missing-clusters' : ''} \
-        --output ${params.project_tag}.annotated.h5ad \
-        --cluster-summary-output ${params.project_tag}.cluster_annotation_summary.csv \
-        --marker-genes-output ${params.project_tag}.cluster_marker_genes.tsv \
+        --output ${prefix}.annotated.h5ad \
+        --cluster-summary-output ${prefix}.cluster_annotation_summary.csv \
+        --marker-genes-output ${prefix}.cluster_marker_genes.tsv \
         --marker-genes-n-top ${params.marker_genes_n_top} \
         --marker-genes-method ${params.marker_genes_method} \
-        ${params.marker_dotplot ? "--marker-dotplot-output ${params.project_tag}.cluster_marker_dotplot.png --marker-dotplot-n-top ${params.marker_dotplot_n_top}" : ""}
+        ${params.marker_dotplot ? "--marker-dotplot-output ${prefix}.cluster_marker_dotplot.png --marker-dotplot-n-top ${params.marker_dotplot_n_top}" : ""}
     """
 }
 
 workflow {
+    if( !querySamples ) {
+        error "Missing required parameter: --query_h5ad"
+    }
+
     // An empty list stages no reference file, which is what a query-only run
-    // (for example --tools panhumanpy) needs.
+    // (for example --tools panhumanpy, or annotation from pretrained models) needs.
     Channel
-        .value(needsReference ? refH5ad : [])
+        .value(useReference ? refH5ad : [])
         .set { ref_h5ad_ch }
 
     Channel
-        .value(queryH5ad)
-        .set { query_h5ad_ch }
+        .fromList(querySamples)
+        .set { query_ch }
 
-    validation_outputs = VALIDATE_INPUTS(ref_h5ad_ch, query_h5ad_ch)
-    validation_manifest_ch = validation_outputs.manifest
+    // Every reference-side process takes only value channels as input, so its outputs are
+    // value channels too and can be read once per query. Keep it that way: if one of these
+    // ever became a queue channel it would pair off against the first query and silently
+    // leave the rest unannotated.
+    if( useReference ) {
+        reference_outputs = VALIDATE_REFERENCE(ref_h5ad_ch)
+        reference_manifest_ch = reference_outputs.manifest
+        reference_genes_ch = reference_outputs.genes
+    }
+    else {
+        reference_manifest_ch = Channel.value([])
+        reference_genes_ch = Channel.value([])
+    }
+
+    // Joining the per-sample manifest back onto the query makes annotation wait for that
+    // sample's validation, while still letting samples progress independently.
+    validated_query_ch = query_ch
+        .join(VALIDATE_QUERY(query_ch, reference_genes_ch, reference_manifest_ch).manifest)
+        .map { sample_id, query_h5ad, query_manifest -> [sample_id, query_h5ad] }
 
     annotation_channels = []
 
     if( runCelltypist ) {
         celltypist_model_ch = celltypistMode == 'pretrained'
             ? Channel.value(file(params.celltypist_model, checkIfExists: true))
-            : CELLTYPIST_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch).model
+            : CELLTYPIST_TRAIN_MODEL(ref_h5ad_ch, reference_manifest_ch).model
 
-        annotation_channels << CELLTYPIST_ANNOTATE(query_h5ad_ch, celltypist_model_ch).predictions
+        annotation_channels << CELLTYPIST_ANNOTATE(validated_query_ch, celltypist_model_ch).predictions
     }
 
     if( runScanvi ) {
         scanvi_model_ch = scanviMode == 'pretrained'
             ? Channel.value(file(params.scanvi_model_dir, checkIfExists: true))
-            : SCANVI_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch).model_dir
+            : SCANVI_TRAIN_MODEL(ref_h5ad_ch, reference_manifest_ch).model_dir
 
-        scanvi_annotation_outputs = SCANVI_ANNOTATE(query_h5ad_ch, scanvi_model_ch)
+        scanvi_annotation_outputs = SCANVI_ANNOTATE(validated_query_ch, scanvi_model_ch)
         annotation_channels << scanvi_annotation_outputs.predictions
         annotation_channels << scanvi_annotation_outputs.latent
     }
 
     if( runPanhumanpy ) {
-        annotation_channels << PANHUMANPY_ANNOTATE(query_h5ad_ch).predictions
+        annotation_channels << PANHUMANPY_ANNOTATE(validated_query_ch).predictions
     }
 
-    // Sorted so the staged input order is stable and -resume keeps hitting the cache.
+    // Each selected tool contributes a known number of files per sample, so grouping by
+    // that size releases a sample as soon as its own annotations land instead of waiting
+    // for every other sample. Sorted for a stable staging order, which keeps -resume warm.
+    def expectedAnnotationFiles = (runCelltypist ? 1 : 0) + (runScanvi ? 2 : 0) + (runPanhumanpy ? 1 : 0)
     annotation_files_ch = annotation_channels
         .tail()
         .inject(annotation_channels.head()) { merged, channel -> merged.mix(channel) }
-        .toSortedList()
+        .groupTuple(size: expectedAnnotationFiles, sort: true)
 
-    MERGE_ANNOTATIONS(query_h5ad_ch, annotation_files_ch)
+    // failOnMismatch turns a sample whose annotation group never completed into a hard
+    // error. Without it groupTuple simply never emits that key and the sample would
+    // vanish from the results while the run still reported success.
+    MERGE_ANNOTATIONS(validated_query_ch.join(annotation_files_ch, failOnMismatch: true, failOnDuplicate: true))
 }
 
 workflow TRAIN_MODELS {
-    if( !needsReference ) {
+    if( !runCelltypist && !runScanvi ) {
         error "The TRAIN_MODELS entry point needs --tools to include celltypist or scanvi"
     }
-    if( !(runCelltypist && celltypistMode == 'train') && !(runScanvi && scanviMode == 'train') ) {
+    if( !trainsCelltypist && !trainsScanvi ) {
         error "Nothing to train: every selected reference-based tool was given a pretrained model"
     }
 
@@ -372,17 +463,13 @@ workflow TRAIN_MODELS {
         .value(refH5ad)
         .set { ref_h5ad_ch }
 
-    Channel
-        .value(queryH5ad)
-        .set { query_h5ad_ch }
+    // Training is independent of the query objects, so this entry point never reads them.
+    reference_manifest_ch = VALIDATE_REFERENCE(ref_h5ad_ch).manifest
 
-    validation_outputs = VALIDATE_INPUTS(ref_h5ad_ch, query_h5ad_ch)
-    validation_manifest_ch = validation_outputs.manifest
-
-    if( runCelltypist && celltypistMode == 'train' ) {
-        CELLTYPIST_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch)
+    if( trainsCelltypist ) {
+        CELLTYPIST_TRAIN_MODEL(ref_h5ad_ch, reference_manifest_ch)
     }
-    if( runScanvi && scanviMode == 'train' ) {
-        SCANVI_TRAIN_MODEL(ref_h5ad_ch, validation_manifest_ch)
+    if( trainsScanvi ) {
+        SCANVI_TRAIN_MODEL(ref_h5ad_ch, reference_manifest_ch)
     }
 }

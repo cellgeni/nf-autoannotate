@@ -18,17 +18,25 @@ The workflow is implemented in [main.nf](main.nf), with supporting Python script
 
 The default workflow stages are:
 
-1. Validate the reference and query AnnData files, then write `validation_manifest.json` and `shared_genes.txt`.
+Once per run, from the reference alone:
+
+1. Validate the reference AnnData file, then write `reference_manifest.json` and `reference_genes.txt`.
 2. Train or load a CellTypist model.
 3. Train or load scVI/scANVI reference models.
-4. Annotate the query with CellTypist.
-5. Annotate the query with scANVI query mapping.
-6. Annotate the query with PanHumanPy.
-7. Merge method outputs into the query `.h5ad` and write a cluster annotation summary.
 
-Stages 2-6 only run for the tools named in `--tools`. Stages 1 and 7 always run, so a subset run still validates its inputs and still produces the annotated `.h5ad`, cluster summary, and marker gene outputs.
+Once per query:
 
-A training-only entry workflow is also available with `-entry TRAIN_MODELS`. It runs validation and model training, publishes CellTypist plus scVI/scANVI artifacts, and skips query annotation, PanHumanPy, and merge outputs. It requires `--tools` to include at least one of `celltypist` or `scanvi`.
+4. Validate the query AnnData file and record its coverage of the reference gene space.
+5. Annotate the query with CellTypist.
+6. Annotate the query with scANVI query mapping.
+7. Annotate the query with PanHumanPy.
+8. Merge method outputs into the query `.h5ad` and write a cluster annotation summary.
+
+Stages 2, 3, and 5-7 only run for the tools named in `--tools`. Stages 4 and 8 always run, so a subset run still validates its inputs and still produces the annotated `.h5ad`, cluster summary, and marker gene outputs.
+
+Models are trained from the reference and never from a reference-query intersection, which is what lets one training run serve any number of queries. Their final feature space is narrower than the reference, because CellTypist feature selection and scVI HVG selection each reduce it. Every query is aligned to the trained model's own feature list at annotation time, with genes it lacks zero-filled.
+
+A training-only entry workflow is also available with `-entry TRAIN_MODELS`. It runs reference validation and model training, publishes CellTypist plus scVI/scANVI artifacts, and skips query annotation, PanHumanPy, and merge outputs. It requires `--tools` to include at least one of `celltypist` or `scanvi`, and because training never reads a query it does not need `--query_h5ad` at all.
 
 ## Tool Selection
 
@@ -46,23 +54,57 @@ tools:
 
 Selecting a subset changes what the run requires and produces:
 
-- A reference is only needed by CellTypist and scANVI. `--tools panhumanpy` annotates the query on its own, so `--ref_h5ad` and `--ref_label_col` are not required and `shared_genes.txt` is not written.
+- A reference is only needed to train CellTypist or scANVI. `--tools panhumanpy` annotates the query on its own, and so does a run that supplies pretrained models for every selected reference-based tool; in both cases `--ref_h5ad` and `--ref_label_col` are optional and the reference validation stage is skipped.
 - The cluster annotation summary only contains columns for the tools that ran. The `celltypist_scanvi_*` agreement columns need both CellTypist and scANVI, so they are omitted otherwise.
 - Supplying an option for a tool that was not selected is an error rather than a silent no-op. For example `--tools panhumanpy --celltypist_model model.pkl` fails immediately.
 
 ## Required Inputs
 
-- `--query_h5ad`: query AnnData file to annotate.
+- `--query_h5ad`: query AnnData file(s) to annotate. A path, a glob, or a list. See [Multiple Queries](#multiple-queries).
 - `--project_tag`: output filename prefix.
-- `--ref_h5ad`: reference AnnData file. Required when `--tools` includes `celltypist` or `scanvi`.
-- `--ref_label_col`: reference `obs` column containing cell type labels. Required when `--tools` includes `celltypist` or `scanvi`.
+- `--ref_h5ad`: reference AnnData file. Required when a reference-based tool is trained, that is when `--tools` includes `celltypist` or `scanvi` without a matching pretrained model. Optional otherwise, and still used for the reference-coverage diagnostic when supplied.
+- `--ref_label_col`: reference `obs` column containing cell type labels. Required whenever a reference h5ad is used.
+
+## Multiple Queries
+
+`--query_h5ad` accepts one path, a shell glob, or a list, and each query is annotated independently:
+
+```yaml
+# any of these
+query_h5ad: /data/donor1.h5ad
+query_h5ad: /data/queries/*.h5ad
+query_h5ad:
+  - /data/donor1.h5ad
+  - /data/donor2.h5ad
+```
+
+```bash
+nextflow run main.nf --query_h5ad '/data/queries/*.h5ad' ...
+```
+
+Quote globs on the command line so the shell passes the pattern through rather than expanding it into several arguments.
+
+The sample ID for each query is its filename without the final extension, so `/data/donor1.h5ad` becomes `donor1`. Sample IDs must be unique; two files that reduce to the same ID fail before any task is submitted. Sample IDs name the per-query output subdirectory and appear in every per-query filename.
+
+Reference validation and model training run **once** regardless of how many queries are supplied, because no query takes part in training. Each query then validates, annotates, and merges independently, so one slow query does not hold up the others.
+
+Queries are never combined. There is no cross-query summary, and no query influences another's labels.
+
+Models are trained from the reference rather than from a reference-query intersection, but their final feature space is narrower than the reference: CellTypist keeps a per-label subset after feature selection, and scVI keeps `--scanvi_hvg_n_top_genes` highly variable genes. A query that lacks some of those features has them zero-filled when it is aligned to the model.
+
+Two separate numbers are reported as a result:
+
+- **Reference coverage**, recorded per query in `<sample_id>.query_manifest.json` and warned on below 80%. This is a broad diagnostic against the whole reference gene space, not a statement about model compatibility.
+- **Model gene overlap**, printed by each annotation step against that model's actual feature list. This is the authoritative check: CellTypist fails outright below 80%, and scANVI warns.
+
+A query can show good reference coverage and still overlap poorly with a model's selected features, so treat the per-model number as the one that matters.
 
 Optional reference filtering:
 
 - `--ref_filter_col`: reference `obs` column used to filter the reference before model training.
 - `--ref_filter_values`: comma-separated values to keep from `--ref_filter_col`, for example `E12,E14` or `treated,control`.
 
-`--ref_filter_col` and `--ref_filter_values` must be supplied together, and require `--tools` to include a reference-based tool.
+`--ref_filter_col` and `--ref_filter_values` must be supplied together, and only affect model training, so they require a reference-based tool that is actually being trained.
 
 Run parameters are normally defined in a YAML file passed with `-params-file`. Start from [examples/autoannotate.params.yml](examples/autoannotate.params.yml), edit the values for your run, and launch the workflow with that file. Parameter defaults and runtime settings live in [nextflow.config](nextflow.config), and user-facing parameters are described and validated by [nextflow_schema.json](nextflow_schema.json).
 
@@ -78,7 +120,7 @@ The pipeline selects model behavior from artifact flags instead of explicit mode
 Required when using pretrained or external artifacts:
 
 - `--celltypist_model`: required to reuse a pretrained CellTypist model.
-- `--scanvi_model_dir`: required to reuse a pretrained scANVI model directory.
+- `--scanvi_model_dir`: required to reuse a pretrained scANVI model directory. It must contain the `scanvi_model_metadata.json` written by this pipeline, which records the model's gene space; a directory saved by scvi-tools alone does not carry that information and is rejected.
 - `--scvi_reference_model_dir`: required only when initializing scANVI training from a pretrained scVI reference model. Do not combine this with `--scanvi_model_dir`.
 
 CellTypist optional controls:
@@ -143,34 +185,57 @@ Parameter defaults live in [nextflow.config](nextflow.config); user-facing param
 
 ## Validation
 
-Before model steps run, the pipeline checks that:
+Validation is split in two. Reference validation runs once before any model step and checks that:
 
-- input files exist
-- `ref_label_col` exists in `ref_h5ad.obs`, when a reference-based tool is selected
-- `batch_key`, if supplied, exists in both reference and query `obs`
-- all `scanvi_categorical_covariate_keys`, if supplied, exist in both objects
-- all `scanvi_continuous_covariate_keys`, if supplied, exist in both objects
-- `panhumanpy_feature_names_col`, if supplied, exists in `query_h5ad.var`
-- `query_h5ad.X` contains raw non-negative integer counts
-- `query_cluster_col` exists in `query_h5ad.obs`, unless `compute_missing_clusters` is enabled
+- the reference file exists
+- `ref_label_col` exists in `ref_h5ad.obs`
+- `batch_key`, if supplied, exists in `ref_h5ad.obs`
+- all `scanvi_categorical_covariate_keys` and `scanvi_continuous_covariate_keys`, if supplied, exist in the reference
 - reference filters are valid and keep at least one reference cell
-- reference and query cell indices are unique
-- reference and query gene indices are unique
-- reference and query gene identifiers use the same broad scheme, such as symbols or Ensembl IDs
-- reference and query share at least one gene
+- reference cell and gene indices are unique
 
-All reference-side checks are skipped when `--tools` selects no reference-based tool, so a `--tools panhumanpy` run validates the query alone.
+Query validation runs once per query and checks that:
+
+- the query file exists
+- `query_h5ad.X` contains raw non-negative integer counts
+- query cell and gene indices are unique
+- `query_cluster_col` exists in `query_h5ad.obs`, unless `compute_missing_clusters` is enabled
+- `batch_key` and any covariate keys, if supplied, exist in the query `obs`
+- `panhumanpy_feature_names_col`, if supplied, exists in `query_h5ad.var`
+- the query and reference gene identifiers use the same broad scheme, such as symbols or Ensembl IDs
+- the query shares at least one gene with the reference
+
+The whole reference stage is skipped when no reference h5ad is used, so a `--tools panhumanpy` run, or a run annotating purely from pretrained models, validates its queries alone.
 
 The merge step also validates that every annotation CSV has unique `cell_id` values matching `query.obs_names` exactly. Missing or extra cells now fail the merge instead of becoming silent `NaN` values.
 
 ## Outputs
 
-Published files:
+Shared reference and model artifacts are published at the top of the output directory, and each query gets its own subdirectory named after its sample ID:
 
-- `<project_tag>.annotated.h5ad`
-- `<project_tag>.cluster_annotation_summary.csv`
-- `<project_tag>.cluster_marker_genes.tsv`
-- `<project_tag>.cluster_marker_dotplot.png` when `--marker_dotplot true` and at least two clusters are available
+```
+<outdir>/
+  reference_manifest.json
+  reference_genes.txt
+  celltypist_model.pkl
+  celltypist_model_metadata.json
+  scvi_model/
+  scvi_model_metadata.json
+  scanvi_model/
+  scanvi_model_metadata.json
+  donor1/
+    donor1.query_manifest.json
+    <project_tag>.donor1.annotated.h5ad
+    <project_tag>.donor1.cluster_annotation_summary.csv
+    <project_tag>.donor1.cluster_marker_genes.tsv
+    <project_tag>.donor1.cluster_marker_dotplot.png
+  donor2/
+    ...
+```
+
+The sample ID appears in both the directory name and the filenames so that results stay distinguishable when copied out of the tree. Single-query runs use the same layout.
+
+The marker dotplot is written when `--marker_dotplot true` and at least two clusters are available.
 
 The annotated `.h5ad` is the query object with additional `obs` columns and scANVI latent representations in `obsm`.
 
@@ -230,22 +295,7 @@ If the query contains fewer than two clusters, the marker-gene TSV is still writ
 
 When `--marker_dotplot true`, the merge step writes `<project_tag>.cluster_marker_dotplot.png` with Scanpy `dotplot` using the top `--marker_dotplot_n_top` ranked genes per cluster from the same marker calculation. Set `--marker_dotplot false` to skip the PNG output while keeping the marker-gene TSV unchanged.
 
-With all three tools selected, the workflow publishes final annotation outputs and model-training artifacts, including:
-
-- `<project_tag>.annotated.h5ad`
-- `<project_tag>.cluster_annotation_summary.csv`
-- `<project_tag>.cluster_marker_genes.tsv`
-- `<project_tag>.cluster_marker_dotplot.png` when marker dotplots are enabled
-- `validation_manifest.json`
-- `shared_genes.txt`
-- `celltypist_model.pkl`
-- `celltypist_model_metadata.json`
-- `scvi_model/`
-- `scvi_model_metadata.json`
-- `scanvi_model/`
-- `scanvi_model_metadata.json`
-
-A subset run publishes only the artifacts of the tools it ran. `shared_genes.txt` is also omitted when no reference-based tool is selected.
+A subset run publishes only the artifacts of the tools it ran. `reference_manifest.json` and `reference_genes.txt` are omitted when no reference-based tool is selected.
 
 Intermediate annotation files remain in Nextflow work directories, including `celltypist_predictions.csv`, `scanvi_predictions.csv`, `scanvi_latent.h5ad`, and `panhumanpy_predictions.csv`.
 
@@ -311,18 +361,30 @@ nextflow run main.nf \
   --query_cluster_col leiden
 ```
 
-Train CellTypist plus scVI/scANVI model artifacts only:
+Annotate several queries against one set of trained models:
+
+```bash
+module load cellgen/nextflow
+
+nextflow run main.nf \
+  --ref_h5ad /path/to/reference.h5ad \
+  --query_h5ad '/path/to/queries/*.h5ad' \
+  --project_tag cohort \
+  --ref_label_col cell_type \
+  --batch_key donor \
+  --query_cluster_col leiden
+```
+
+Train CellTypist plus scVI/scANVI model artifacts only, with no query at all:
 
 ```bash
 module load cellgen/nextflow
 
 nextflow run main.nf -entry TRAIN_MODELS \
   --ref_h5ad /path/to/reference.h5ad \
-  --query_h5ad /path/to/query.h5ad \
   --project_tag model_training \
   --ref_label_col cell_type \
   --batch_key donor \
-  --query_cluster_col leiden \
   --outdir results/model_training
 ```
 
@@ -409,7 +471,9 @@ nextflow run main.nf \
 ## Assumptions
 
 - Input `.h5ad` files should already be normalized/preprocessed appropriately for the chosen annotation methods.
-- Gene alignment for CellTypist uses the reference-query intersection from validation. Fresh scANVI training starts from the shared gene set to build a reference model; query mapping follows the saved scANVI model registry.
+- CellTypist and scANVI are trained from the reference alone, never from a reference-query intersection, so a single training run serves any number of queries. Feature selection and HVG selection then narrow each model's feature space to a subset of the reference. At annotation time each query is aligned to the trained model's own feature list and genes it lacks are zero-filled; scANVI query mapping otherwise follows the saved model registry.
+- Pretrained scANVI directories must carry the `scanvi_model_metadata.json` written by this pipeline, which records the model's gene space. A reference gene list cannot substitute for it, because the model's features are a post-HVG subset.
+- Every query is annotated independently. No query influences another's labels, and no cross-query summary is produced.
 - PanHumanPy receives the original query feature space, optionally using `--panhumanpy_feature_names_col` for symbols.
 - CellTypist, scANVI, and PanHumanPy outputs are kept separate, and each can be enabled or disabled independently with `--tools`.
 - PanHumanPy is not compared with CellTypist or scANVI because it uses a different reference.

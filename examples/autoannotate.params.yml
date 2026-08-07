@@ -9,9 +9,16 @@ tools: celltypist,scanvi,panhumanpy
 # ref_h5ad and ref_label_col are only needed when tools includes celltypist or scanvi;
 # a panhumanpy-only run needs the query alone.
 ref_h5ad: /path/to/reference.h5ad
-query_h5ad: /path/to/query.h5ad
 project_tag: autoannotate_run
 ref_label_col: cell_type
+
+# query_h5ad accepts one path, a glob, or a list. Each query is annotated separately and
+# gets its own output subdirectory named after the file (without its extension).
+query_h5ad: /path/to/query.h5ad
+# query_h5ad: /path/to/queries/*.h5ad
+# query_h5ad:
+#   - /path/to/donor1.h5ad
+#   - /path/to/donor2.h5ad
 
 # Optional output location
 outdir: results/autoannotate_run

@@ -63,7 +63,6 @@
       "type": "object",
       "fa_icon": "fas fa-file",
       "required": [
-        "query_h5ad",
         "project_tag"
       ],
       "properties": {
@@ -77,10 +76,16 @@
           "exists": true
         },
         "query_h5ad": {
-          "type": "string",
-          "description": "Query AnnData .h5ad file to annotate.",
-          "format": "file-path",
-          "exists": true,
+          "type": [
+            "string",
+            "array"
+          ],
+          "description": "Query AnnData .h5ad file(s) to annotate. Accepts a path, a glob, or a list of either. Each file is annotated separately, with the sample ID taken from the filename without its extension. Existence is checked when the workflow starts rather than during schema validation, because a glob has no single path to check.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
           "minLength": 1
         },
         "project_tag": {
