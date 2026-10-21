@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 
-import argparse
-import json
+"""Shared validation helpers used by validate_reference.py and validate_query.py."""
+
 import re
 import runpy
 
 import h5py
 import numpy as np
-from pathlib import Path
 
 import anndata as ad
 
@@ -15,24 +14,20 @@ import anndata as ad
 MATRIX_CHUNK_SIZE = 1_000_000
 INTEGER_TOLERANCE = 1e-6
 
+TOOL_CHOICES = ("celltypist", "scanvi", "panhumanpy")
+REFERENCE_TOOLS = frozenset({"celltypist", "scanvi"})
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Validate reference/query h5ad inputs.")
-    parser.add_argument("--ref-h5ad", required=True)
-    parser.add_argument("--query-h5ad", required=True)
-    parser.add_argument("--ref-label-col", required=True)
-    parser.add_argument("--batch-key")
-    parser.add_argument("--categorical-covariate-keys")
-    parser.add_argument("--continuous-covariate-keys")
-    parser.add_argument("--nf-scvi-metrics-config")
-    parser.add_argument("--panhumanpy-feature-names-col")
-    parser.add_argument("--query-cluster-col", required=True)
-    parser.add_argument("--compute-missing-clusters", action="store_true")
-    parser.add_argument("--ref-filter-col")
-    parser.add_argument("--ref-filter-values")
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--shared-genes-output", required=True)
-    return parser.parse_args()
+
+def parse_tools(raw_tools: str | None) -> set[str]:
+    tools = {value.strip().lower() for value in (raw_tools or "").split(",") if value.strip()}
+    unknown = sorted(tools - set(TOOL_CHOICES))
+    if unknown:
+        raise ValueError(
+            f"Unknown --tools entries: {', '.join(unknown)}. Expected one of: {', '.join(TOOL_CHOICES)}"
+        )
+    if not tools:
+        raise ValueError(f"--tools must name at least one of: {', '.join(TOOL_CHOICES)}")
+    return tools
 
 
 def matrix_value_dataset(handle: h5py.File, label: str) -> h5py.Dataset:
@@ -87,6 +82,160 @@ def require_raw_count_matrix(handle: h5py.File, label: str) -> None:
                 f"{label} /X does not look like raw counts: found non-integer values. "
                 "Provide raw non-negative integer counts in adata.X, not normalized or log-transformed expression."
             )
+
+
+try:
+    from anndata.io import sparse_dataset
+except ImportError:  # anndata < 0.11
+    from anndata.experimental import sparse_dataset
+
+
+CELLTYPIST_TARGET_SUM = 1e4
+CELLTYPIST_SUM_TOLERANCE = 1e-2
+CELLTYPIST_SAMPLE_BLOCKS = 5
+CELLTYPIST_SAMPLE_BLOCK_ROWS = 200
+# Locations checked, in order, for the matrix CellTypist is given.
+CELLTYPIST_MATRIX_LOCATIONS = ("X", "layers/counts", "raw/X")
+
+
+def sample_row_indices(n_rows: int) -> np.ndarray:
+    starts = np.linspace(0, max(0, n_rows - CELLTYPIST_SAMPLE_BLOCK_ROWS), CELLTYPIST_SAMPLE_BLOCKS)
+    rows = {
+        row
+        for start in starts
+        for row in range(int(start), min(n_rows, int(start) + CELLTYPIST_SAMPLE_BLOCK_ROWS))
+    }
+    return np.array(sorted(rows), dtype=np.int64)
+
+
+def sample_csc_values(node: h5py.Group) -> np.ndarray:
+    """A few contiguous runs of stored values from a CSC matrix.
+
+    Per-cell totals need every gene, and a CSC matrix stores genes contiguously, so cells
+    cannot be sampled without reading the whole file. The stored values are enough to tell
+    counts from normalised expression, so only those are read.
+    """
+    data = node["data"]
+    run = CELLTYPIST_SAMPLE_BLOCKS * CELLTYPIST_SAMPLE_BLOCK_ROWS * 100
+    starts = np.linspace(0, max(0, data.shape[0] - run), CELLTYPIST_SAMPLE_BLOCKS)
+    return np.concatenate([data[int(start) : int(start) + run] for start in starts])
+
+
+def is_csc(node) -> bool:
+    encoding = node.attrs.get("encoding-type", "csr_matrix")
+    if isinstance(encoding, bytes):
+        encoding = encoding.decode()
+    return encoding == "csc_matrix"
+
+
+def sample_matrix_rows(handle: h5py.File, location: str) -> np.ndarray | None:
+    """Return a dense sample of rows from a matrix in an h5ad, or None if it is absent."""
+    if location not in handle:
+        return None
+
+    node = handle[location]
+    if isinstance(node, h5py.Dataset):
+        rows = sample_row_indices(node.shape[0])
+        return np.vstack([np.asarray(node[start : stop]) for start, stop in _contiguous_runs(rows)])
+    if isinstance(node, h5py.Group) and "indptr" in node and not is_csc(node):
+        matrix = sparse_dataset(node)
+        rows = sample_row_indices(matrix.shape[0])
+        return np.vstack([matrix[start:stop].toarray() for start, stop in _contiguous_runs(rows)])
+    return None
+
+
+def _contiguous_runs(rows: np.ndarray):
+    breaks = np.flatnonzero(np.diff(rows) != 1) + 1
+    for run in np.split(rows, breaks):
+        yield int(run[0]), int(run[-1]) + 1
+
+
+def looks_like_log1p_normalised(values: np.ndarray) -> bool:
+    """True when expm1 of every sampled cell sums to the CellTypist target of 10,000."""
+    if values.size == 0 or not np.isfinite(values).all() or (values < 0).any():
+        return False
+    totals = np.expm1(values.astype(np.float64)).sum(axis=1)
+    return bool(np.allclose(totals, CELLTYPIST_TARGET_SUM, rtol=CELLTYPIST_SUM_TOLERANCE))
+
+
+def looks_like_raw_counts(values: np.ndarray) -> bool:
+    if values.size == 0 or not np.isfinite(values).all() or (values < 0).any():
+        return False
+    return bool((np.abs(values - np.rint(values)) <= INTEGER_TOLERANCE).all())
+
+
+def classify_celltypist_matrix(handle: h5py.File, location: str) -> str | None:
+    """Return 'normalised', 'counts', or None for the matrix at a location.
+
+    Dense and CSR matrices are classified from a sample of cells, with the exact check that
+    expm1 sums to 10,000 per cell. CSC matrices are classified from stored values alone,
+    where normalised means non-integer and no larger than log1p(10,000); the exact per-cell
+    check for those is left to the annotation step, which has the matrix in memory.
+    """
+    if location not in handle:
+        return None
+    node = handle[location]
+
+    if isinstance(node, h5py.Group) and "indptr" in node and is_csc(node):
+        values = sample_csc_values(node)
+        if values.size == 0 or not np.isfinite(values).all() or (values < 0).any():
+            return None
+        if looks_like_raw_counts(values):
+            return "counts"
+        if values.max() <= np.log1p(CELLTYPIST_TARGET_SUM) + 1e-3:
+            return "normalised"
+        return None
+
+    sample = sample_matrix_rows(handle, location)
+    if sample is None:
+        return None
+    if looks_like_log1p_normalised(sample):
+        return "normalised"
+    if looks_like_raw_counts(sample):
+        return "counts"
+    return None
+
+
+def select_celltypist_matrix(handle: h5py.File, label: str) -> tuple[str, bool]:
+    """Pick the matrix CellTypist should use and say whether it is already normalised.
+
+    CellTypist needs log1p expression normalised to 10,000 counts per cell. X is used as
+    it is when it already has that form. Otherwise raw counts are taken from X,
+    layers['counts'], or raw.X, in that order, and normalised by the caller. Returns the
+    HDF5 location of the matrix and whether it needs no further normalisation.
+    """
+    x_kind = classify_celltypist_matrix(handle, "X")
+    if x_kind == "normalised":
+        return "X", True
+
+    for location in CELLTYPIST_MATRIX_LOCATIONS:
+        kind = x_kind if location == "X" else classify_celltypist_matrix(handle, location)
+        if kind == "counts":
+            return location, False
+
+    raise ValueError(
+        f"{label} has no usable expression matrix for CellTypist. CellTypist needs log1p "
+        "expression normalised to 10,000 counts per cell, or raw integer counts to "
+        "normalise. adata.X is neither, and no raw counts were found in "
+        "adata.layers['counts'] or adata.raw.X."
+    )
+
+
+def log1p_totals_are_normalised(matrix, rows_per_chunk: int = 100_000) -> bool:
+    """Exact check, over every cell, that expm1 of a loaded matrix sums to 10,000 per cell."""
+    from scipy import sparse
+
+    for start in range(0, matrix.shape[0], rows_per_chunk):
+        chunk = matrix[start : start + rows_per_chunk]
+        if sparse.issparse(chunk):
+            chunk = chunk.copy()
+            chunk.data = np.expm1(chunk.data.astype(np.float64))
+            totals = np.asarray(chunk.sum(axis=1)).ravel()
+        else:
+            totals = np.expm1(np.asarray(chunk, dtype=np.float64)).sum(axis=1)
+        if not np.allclose(totals, CELLTYPIST_TARGET_SUM, rtol=CELLTYPIST_SUM_TOLERANCE):
+            return False
+    return True
 
 
 def require_obs_column(adata: ad.AnnData, column: str, label: str) -> None:
@@ -280,44 +429,8 @@ def load_nf_scvi_metrics_config(path: str | None) -> dict[str, dict]:
     return {"param_input": param_input}
 
 
-def resolve_reference_filter(args: argparse.Namespace) -> tuple[str | None, list[str]]:
-    filter_col = args.ref_filter_col
-    filter_values = parse_filter_values(args.ref_filter_values)
-    if (filter_col and not filter_values) or (not filter_col and filter_values):
-        raise ValueError("Both --ref-filter-col and --ref-filter-values are required together")
-    return filter_col, filter_values
-
-
-def require_query_cluster_column(
-    query: ad.AnnData,
-    query_cluster_col: str,
-    compute_missing_clusters: bool,
-) -> None:
-    if compute_missing_clusters:
-        return
-    require_obs_column(query, query_cluster_col, "query h5ad")
-
-
-def main():
-    args = parse_args()
-
-    ref_path = Path(args.ref_h5ad)
-    query_path = Path(args.query_h5ad)
-
-    if not ref_path.exists():
-        raise FileNotFoundError(f"Reference h5ad not found: {ref_path}")
-    if not query_path.exists():
-        raise FileNotFoundError(f"Query h5ad not found: {query_path}")
-
-    with h5py.File(query_path, "r") as query_handle:
-        require_raw_count_matrix(query_handle, "query h5ad")
-
-    ref = ad.read_h5ad(ref_path, backed="r")
-    query = ad.read_h5ad(query_path, backed="r")
-
-    require_obs_column(ref, args.ref_label_col, "reference h5ad")
-
-    nf_scvi_metrics_config = load_nf_scvi_metrics_config(args.nf_scvi_metrics_config)
+def resolve_setup_keys(args, nf_scvi_metrics_config: dict) -> tuple:
+    """Resolve layer, batch key, and covariate keys from either the config file or CLI flags."""
     config_param_input = nf_scvi_metrics_config.get("param_input", {})
     layer = config_param_input.get("layer") if nf_scvi_metrics_config else None
     batch_key = config_param_input.get("batch_key") if nf_scvi_metrics_config else args.batch_key
@@ -340,94 +453,20 @@ def main():
 
     if isinstance(layer, (list, tuple, set, dict)):
         raise ValueError("param_input.layer must be a single layer name")
-    if layer:
-        if layer not in ref.layers:
-            raise ValueError(f"Missing required layer '{layer}' in reference h5ad")
-        if layer not in query.layers:
-            raise ValueError(f"Missing required layer '{layer}' in query h5ad")
-
     if isinstance(batch_key, (list, tuple, set, dict)):
         raise ValueError("param_input.batch_key must be a single column name")
-    if batch_key:
-        require_obs_column(ref, batch_key, "reference h5ad")
-        require_obs_column(query, batch_key, "query h5ad")
-
     if batch_key and batch_key in categorical_covariate_keys:
         raise ValueError("categorical covariate keys should contain additional columns, not the batch key")
-    for covariate_key in categorical_covariate_keys:
-        require_obs_column(ref, covariate_key, "reference h5ad")
-        require_obs_column(query, covariate_key, "query h5ad")
 
-    for covariate_key in continuous_covariate_keys:
-        require_obs_column(ref, covariate_key, "reference h5ad")
-        require_obs_column(query, covariate_key, "query h5ad")
+    return layer, batch_key, categorical_covariate_keys, continuous_covariate_keys
 
-    if args.panhumanpy_feature_names_col and args.panhumanpy_feature_names_col not in query.var:
-        raise ValueError(
-            f"Missing required var column '{args.panhumanpy_feature_names_col}' in query h5ad"
-        )
-    require_query_cluster_column(query, args.query_cluster_col, args.compute_missing_clusters)
 
-    require_unique_index(ref, "Reference")
-    require_unique_index(query, "Query")
-    require_unique_var_index(ref, "Reference")
-    require_unique_var_index(query, "Query")
+def read_gene_list(path: str) -> list[str]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip()]
 
-    ref_filter_col, ref_filter_values = resolve_reference_filter(args)
-    filtered_ref_cell_count = int(ref.n_obs)
-    if ref_filter_col:
-        require_obs_column(ref, ref_filter_col, "reference h5ad")
-        available_filter_values = sorted({str(value) for value in ref.obs[ref_filter_col].astype(str)})
-        missing_filter_values = sorted(set(ref_filter_values) - set(available_filter_values))
-        if missing_filter_values:
-            raise ValueError(
-                "Requested reference filter values were not found in "
-                f"'{ref_filter_col}': {', '.join(missing_filter_values)}"
-            )
-        filtered_ref_cell_count = int(ref.obs[ref_filter_col].astype(str).isin(ref_filter_values).sum())
-        if filtered_ref_cell_count == 0:
-            raise ValueError("Reference filtering removed all cells")
 
-    ref_gene_id_type = infer_gene_id_type(ref.var_names)
-    query_gene_id_type = infer_gene_id_type(query.var_names)
-    if ref_gene_id_type != query_gene_id_type:
-        raise ValueError(
-            "Reference and query use different gene identifier types: "
-            f"reference={ref_gene_id_type}, query={query_gene_id_type}. "
-            "Make sure both h5ad files use the same identifier scheme."
-        )
-
-    query_genes = set(query.var_names)
-    shared_genes = [gene for gene in ref.var_names if gene in query_genes]
-    if not shared_genes:
-        raise ValueError("Reference and query h5ad files do not share any genes")
-
-    manifest = {
-        "ref_h5ad": str(ref_path.resolve()),
-        "query_h5ad": str(query_path.resolve()),
-        "ref_label_col": args.ref_label_col,
-        "batch_key": batch_key,
-        "categorical_covariate_keys": categorical_covariate_keys,
-        "continuous_covariate_keys": continuous_covariate_keys,
-        "panhumanpy_feature_names_col": args.panhumanpy_feature_names_col,
-        "query_cluster_col": args.query_cluster_col,
-        "compute_missing_clusters": args.compute_missing_clusters,
-        "ref_filter_col": ref_filter_col,
-        "ref_filter_values": ref_filter_values,
-        "gene_id_type": ref_gene_id_type,
-        "shared_gene_count": len(shared_genes),
-        "ref_cell_count": int(ref.n_obs),
-        "filtered_ref_cell_count": filtered_ref_cell_count,
-        "query_cell_count": int(query.n_obs),
-    }
-
-    with open(args.output, "w", encoding="utf-8") as handle:
-        json.dump(manifest, handle, indent=2)
-
-    with open(args.shared_genes_output, "w", encoding="utf-8") as handle:
-        handle.write("\n".join(shared_genes))
+def write_gene_list(path: str, genes: list[str]) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(genes))
         handle.write("\n")
-
-
-if __name__ == "__main__":
-    main()

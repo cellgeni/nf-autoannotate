@@ -19,14 +19,16 @@ MARKER_GENE_COLUMNS = [
     "p_value_adj",
 ]
 
+TOOL_CHOICES = ("celltypist", "scanvi", "panhumanpy")
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Merge annotation CSVs into a query h5ad file.")
     parser.add_argument("--query-h5ad", required=True)
-    parser.add_argument("--celltypist-csv", required=True)
-    parser.add_argument("--scanvi-csv", required=True)
+    parser.add_argument("--celltypist-csv")
+    parser.add_argument("--scanvi-csv")
     parser.add_argument("--scanvi-latent-h5ad")
-    parser.add_argument("--panhumanpy-csv", required=True)
+    parser.add_argument("--panhumanpy-csv")
     parser.add_argument("--cluster-column", required=True)
     parser.add_argument("--scanvi-label-column", required=True)
     parser.add_argument("--scanvi-score-column", required=True)
@@ -41,6 +43,23 @@ def parse_args():
     return parser.parse_args()
 
 
+def resolve_tools(args: argparse.Namespace) -> set[str]:
+    tools = set()
+    if args.celltypist_csv:
+        tools.add("celltypist")
+    if args.scanvi_csv:
+        tools.add("scanvi")
+    if args.panhumanpy_csv:
+        tools.add("panhumanpy")
+    if not tools:
+        raise ValueError(
+            "Provide at least one of --celltypist-csv, --scanvi-csv, --panhumanpy-csv"
+        )
+    if args.scanvi_latent_h5ad and "scanvi" not in tools:
+        raise ValueError("--scanvi-latent-h5ad requires --scanvi-csv")
+    return tools
+
+
 def dominant_label_and_fraction(series: pd.Series) -> tuple[str | None, float]:
     cleaned = series.dropna().astype(str)
     if cleaned.empty:
@@ -51,35 +70,53 @@ def dominant_label_and_fraction(series: pd.Series) -> tuple[str | None, float]:
     return top_label, top_fraction
 
 
-def build_cluster_summary(merged: pd.DataFrame, cluster_column: str, scanvi_label_column: str) -> pd.DataFrame:
+def build_cluster_summary(
+    merged: pd.DataFrame,
+    cluster_column: str,
+    scanvi_label_column: str,
+    tools: set[str],
+) -> pd.DataFrame:
+    # Only tools that actually ran contribute columns, so the summary is narrower
+    # when the run selects a subset of them.
+    report_agreement = {"celltypist", "scanvi"} <= tools
     rows = []
     grouped = merged.groupby(cluster_column, dropna=False, observed=False)
 
     for cluster_value, cluster_df in grouped:
-        celltypist_top, celltypist_top_fraction = dominant_label_and_fraction(cluster_df["celltypist_majority_voting"])
-        scanvi_top, scanvi_top_fraction = dominant_label_and_fraction(cluster_df[scanvi_label_column])
-        panhumanpy_top, panhumanpy_top_fraction = dominant_label_and_fraction(cluster_df["panhumanpy_final_level_label"])
-        celltypist_scanvi_agreement_fraction = float(cluster_df["celltypist_scanvi_agree"].fillna(False).mean())
-        celltypist_scanvi_dominant_match = bool(
-            celltypist_top is not None
-            and scanvi_top is not None
-            and celltypist_top == scanvi_top
-        )
+        row = {
+            cluster_column: cluster_value,
+            "n_cells": int(len(cluster_df)),
+        }
 
-        rows.append(
-            {
-                cluster_column: cluster_value,
-                "n_cells": int(len(cluster_df)),
-                "celltypist_majority_top_label": celltypist_top,
-                "celltypist_majority_top_fraction": celltypist_top_fraction,
-                "scanvi_top_label": scanvi_top,
-                "scanvi_top_fraction": scanvi_top_fraction,
-                "panhumanpy_top_label": panhumanpy_top,
-                "panhumanpy_top_fraction": panhumanpy_top_fraction,
-                "celltypist_scanvi_cluster_modal_match": celltypist_scanvi_dominant_match,
-                "celltypist_scanvi_cluster_agreement_fraction": celltypist_scanvi_agreement_fraction,
-            }
-        )
+        celltypist_top = scanvi_top = None
+        if "celltypist" in tools:
+            celltypist_top, celltypist_top_fraction = dominant_label_and_fraction(
+                cluster_df["celltypist_majority_voting"]
+            )
+            row["celltypist_majority_top_label"] = celltypist_top
+            row["celltypist_majority_top_fraction"] = celltypist_top_fraction
+        if "scanvi" in tools:
+            scanvi_top, scanvi_top_fraction = dominant_label_and_fraction(cluster_df[scanvi_label_column])
+            row["scanvi_top_label"] = scanvi_top
+            row["scanvi_top_fraction"] = scanvi_top_fraction
+        if "panhumanpy" in tools:
+            panhumanpy_top, panhumanpy_top_fraction = dominant_label_and_fraction(
+                cluster_df["panhumanpy_final_level_label"]
+            )
+            row["panhumanpy_top_label"] = panhumanpy_top
+            row["panhumanpy_top_fraction"] = panhumanpy_top_fraction
+
+        if report_agreement:
+            row["celltypist_scanvi_cluster_modal_match"] = bool(
+                celltypist_top is not None
+                and scanvi_top is not None
+                and celltypist_top == scanvi_top
+            )
+            row["celltypist_scanvi_cluster_agreement_fraction"] = float(
+                cluster_df["celltypist_scanvi_agree"].fillna(False).mean()
+            )
+
+        rows.append(row)
 
     return pd.DataFrame(rows)
 
@@ -301,68 +338,73 @@ def celltypist_scanvi_agreement(merged: pd.DataFrame, scanvi_label_column: str) 
 
 def main():
     args = parse_args()
+    tools = resolve_tools(args)
 
     query = ad.read_h5ad(args.query_h5ad)
     if not query.obs_names.is_unique:
         raise ValueError("Query cell indices are not unique")
     ensure_cluster_column(query, args.cluster_column, args.compute_missing_clusters)
 
-    celltypist = read_annotation_csv(args.celltypist_csv, "CellTypist")
-    scanvi = read_annotation_csv(args.scanvi_csv, "scANVI")
-    panhumanpy = read_annotation_csv(args.panhumanpy_csv, "PanHumanPy")
+    expected_columns = {
+        "celltypist": (
+            args.celltypist_csv,
+            "CellTypist",
+            {
+                "celltypist_predicted_label",
+                "celltypist_majority_voting",
+                "celltypist_confidence",
+            },
+        ),
+        "scanvi": (
+            args.scanvi_csv,
+            "scANVI",
+            {
+                args.scanvi_label_column,
+                args.scanvi_score_column,
+            },
+        ),
+        "panhumanpy": (
+            args.panhumanpy_csv,
+            "PanHumanPy",
+            {
+                "panhumanpy_full_hierarchical_label",
+                "panhumanpy_level_zero_label",
+                "panhumanpy_final_level_label",
+                "panhumanpy_confidence",
+            },
+        ),
+    }
 
-    require_columns(
-        celltypist,
-        {
-            "celltypist_predicted_label",
-            "celltypist_majority_voting",
-            "celltypist_confidence",
-        },
-        "CellTypist",
-    )
-    require_columns(
-        scanvi,
-        {
-            args.scanvi_label_column,
-            args.scanvi_score_column,
-        },
-        "scANVI",
-    )
-    require_columns(
-        panhumanpy,
-        {
-            "panhumanpy_full_hierarchical_label",
-            "panhumanpy_level_zero_label",
-            "panhumanpy_final_level_label",
-            "panhumanpy_confidence",
-        },
-        "PanHumanPy",
-    )
-    for label, frame in (
-        ("CellTypist", celltypist),
-        ("scANVI", scanvi),
-        ("PanHumanPy", panhumanpy),
-    ):
+    merged = query.obs.copy()
+    for tool in TOOL_CHOICES:
+        if tool not in tools:
+            continue
+        csv_path, label, columns = expected_columns[tool]
+        frame = read_annotation_csv(csv_path, label)
+        require_columns(frame, columns, label)
         require_matching_cell_ids(frame, query.obs_names, label)
+        merged = merged.join(frame, how="left")
 
-    merged = query.obs.join(celltypist, how="left").join(scanvi, how="left").join(panhumanpy, how="left")
-    merged["celltypist_scanvi_agree"] = celltypist_scanvi_agreement(merged, args.scanvi_label_column)
+    report_agreement = {"celltypist", "scanvi"} <= tools
+    if report_agreement:
+        merged["celltypist_scanvi_agree"] = celltypist_scanvi_agreement(merged, args.scanvi_label_column)
 
-    cluster_summary = build_cluster_summary(merged, args.cluster_column, args.scanvi_label_column)
+    cluster_summary = build_cluster_summary(merged, args.cluster_column, args.scanvi_label_column, tools)
     marker_genes, marker_data = build_marker_genes(
         query,
         args.cluster_column,
         args.marker_genes_n_top,
         args.marker_genes_method,
     )
-    merged = merged.join(
-        cluster_summary.set_index(args.cluster_column)[
-            [
-                "celltypist_scanvi_cluster_agreement_fraction",
-            ]
-        ],
-        on=args.cluster_column,
-    )
+    if report_agreement:
+        merged = merged.join(
+            cluster_summary.set_index(args.cluster_column)[
+                [
+                    "celltypist_scanvi_cluster_agreement_fraction",
+                ]
+            ],
+            on=args.cluster_column,
+        )
 
     query.obs = merged
     if args.scanvi_latent_h5ad:

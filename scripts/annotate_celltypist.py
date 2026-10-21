@@ -5,9 +5,12 @@ import sys
 
 import scanpy as sc
 import celltypist
+import h5py
 import numpy as np
 import pandas as pd
 from scipy import sparse
+
+from validation_common import log1p_totals_are_normalised, select_celltypist_matrix
 
 MIN_MODEL_GENE_OVERLAP_FRACTION = 0.8
 
@@ -15,7 +18,6 @@ MIN_MODEL_GENE_OVERLAP_FRACTION = 0.8
 def parse_args():
     parser = argparse.ArgumentParser(description="Annotate query cells using a CellTypist model.")
     parser.add_argument("--query-h5ad", required=True)
-    parser.add_argument("--shared-genes", required=True)
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--output", required=True)
     return parser.parse_args()
@@ -58,27 +60,36 @@ def confidence_for_labels(probability_matrix: pd.DataFrame, labels: pd.Series) -
     return pd.Series(scores, index=probability_matrix.index, dtype=float)
 
 
-def read_gene_list(path: str) -> list[str]:
-    with open(path, "r", encoding="utf-8") as handle:
-        return [line.strip() for line in handle if line.strip()]
-
-
 def main():
     args = parse_args()
 
+    with h5py.File(args.query_h5ad, "r") as handle:
+        location, already_normalised = select_celltypist_matrix(handle, f"query h5ad '{args.query_h5ad}'")
+
     query = sc.read_h5ad(args.query_h5ad)
+    if location == "layers/counts":
+        query.X = query.layers["counts"]
+    elif location == "raw/X":
+        query = query.raw.to_adata()
     query.var_names_make_unique()
-    sc.pp.normalize_total(query, target_sum=1e4)
-    sc.pp.log1p(query)
+    if already_normalised and not log1p_totals_are_normalised(query.X):
+        raise ValueError(
+            "adata.X looks log1p-normalised, but expm1 of the cells does not sum to 10,000. "
+            "Provide X normalised to 10,000 counts per cell, or raw counts in "
+            "adata.layers['counts'] or adata.raw.X."
+        )
+    if already_normalised:
+        print("CellTypist input: adata.X is already log1p-normalised to 10,000 counts per cell", file=sys.stderr)
+    else:
+        print(f"CellTypist input: normalising raw counts from {location}", file=sys.stderr)
+        sc.pp.normalize_total(query, target_sum=1e4)
+        sc.pp.log1p(query)
 
     model = celltypist.models.Model.load(args.model_path)
     model_genes = list(model.classifier.features)
-    shared_set = set(read_gene_list(args.shared_genes))
     query_gene_set = set(query.var_names)
     overlapping_genes = [gene for gene in model_genes if gene in query_gene_set]
     overlap_fraction = len(overlapping_genes) / len(model_genes) if model_genes else 0.0
-    if not any(gene in shared_set for gene in model_genes):
-        raise ValueError("No genes overlap between query input and CellTypist model features")
     if overlap_fraction < MIN_MODEL_GENE_OVERLAP_FRACTION:
         raise ValueError(
             "Only "

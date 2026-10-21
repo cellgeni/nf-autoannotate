@@ -6,6 +6,9 @@
   "type": "object",
   "allOf": [
     {
+      "$ref": "#/$defs/tool_selection_options"
+    },
+    {
       "$ref": "#/$defs/input_output_options"
     },
     {
@@ -28,29 +31,61 @@
     }
   ],
   "$defs": {
+    "tool_selection_options": {
+      "title": "Tool selection options",
+      "type": "object",
+      "fa_icon": "fas fa-list-check",
+      "required": [
+        "tools"
+      ],
+      "properties": {
+        "tools": {
+          "type": [
+            "string",
+            "array"
+          ],
+          "description": "Annotation tools to run, as a comma-separated string or a YAML list. Any subset of celltypist, scanvi, panhumanpy.",
+          "pattern": "^\\s*(celltypist|scanvi|panhumanpy)\\s*(,\\s*(celltypist|scanvi|panhumanpy)\\s*)*$",
+          "items": {
+            "type": "string",
+            "enum": [
+              "celltypist",
+              "scanvi",
+              "panhumanpy"
+            ]
+          },
+          "minItems": 1
+        }
+      }
+    },
     "input_output_options": {
       "title": "Input and output options",
       "type": "object",
       "fa_icon": "fas fa-file",
       "required": [
-        "ref_h5ad",
-        "query_h5ad",
-        "project_tag",
-        "ref_label_col"
+        "project_tag"
       ],
       "properties": {
         "ref_h5ad": {
-          "type": "string",
-          "description": "Reference AnnData .h5ad file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Reference AnnData .h5ad file. Required when tools includes celltypist or scanvi.",
           "format": "file-path",
-          "exists": true,
-          "minLength": 1
+          "exists": true
         },
         "query_h5ad": {
-          "type": "string",
-          "description": "Query AnnData .h5ad file to annotate.",
-          "format": "file-path",
-          "exists": true,
+          "type": [
+            "string",
+            "array"
+          ],
+          "description": "Query AnnData .h5ad file(s) to annotate. Accepts a path, a glob, or a list of either. Each file is annotated separately, with the sample ID taken from the filename without its extension. Existence is checked when the workflow starts rather than during schema validation, because a glob has no single path to check.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
           "minLength": 1
         },
         "project_tag": {
@@ -68,9 +103,20 @@
           "format": "directory-path"
         },
         "ref_label_col": {
-          "type": "string",
-          "description": "Reference obs column containing cell type labels.",
-          "minLength": 1
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Reference obs column containing cell type labels. Required when tools includes celltypist or scanvi."
+        },
+        "model_sheet": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "CSV or TSV with one (model, query) pair per row, read only by the ANNOTATE_WITH_MODELS entry point. Columns: tool, model, query_h5ad, and optionally model_id. A tab in the header selects TSV parsing.",
+          "format": "file-path",
+          "exists": true
         }
       }
     },
@@ -525,6 +571,13 @@
           ],
           "description": "Compute Leiden clusters if query_cluster_col is absent.",
           "default": false
+        },
+        "merge_annotations": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Merge per-tool predictions into the query h5ad and write the cluster summary and marker genes. Unset defaults to true for the default workflow and false for ANNOTATE_WITH_MODELS, where each pair runs a single tool. Set false to publish the per-tool prediction tables alone, which skips the most expensive step of a run."
         },
         "marker_genes_n_top": {
           "type": [

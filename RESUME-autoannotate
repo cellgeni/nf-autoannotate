@@ -5,7 +5,13 @@ set -euo pipefail
 # Copy examples/autoannotate.params.yml, edit it for the run, then update this path.
 PARAMS_FILE=${PARAMS_FILE:-your-run.params.yml}
 
+# Set ENTRY to resume one of the other entry workflows, for example
+# ENTRY=ANNOTATE_WITH_MODELS with examples/annotate-with-models.params.yml, or
+# ENTRY=TRAIN_MODELS. Leave it empty to resume the default train-and-annotate workflow.
+ENTRY=${ENTRY:-}
+
 nextflow run main.nf \
+  ${ENTRY:+-entry "${ENTRY}"} \
   -params-file "${PARAMS_FILE}" \
   --ansi-log false \
   -resume
