@@ -91,6 +91,8 @@ The sample ID for each query is its filename without the final extension, so `/d
 
 Reference validation and model training run **once** regardless of how many queries are supplied, because no query takes part in training. Each query then validates, annotates, and merges independently, so one slow query does not hold up the others.
 
+CellTypist needs log1p expression normalised to 10,000 counts per cell. The CellTypist step uses `adata.X` as it is when it already has that form. Otherwise it normalises raw counts taken from `adata.X`, then `adata.layers['counts']`, then `adata.raw.X`, whichever holds them first, and fails if none does. For a `--tools celltypist` run, validation applies the same rule up front, so a query with normalised `adata.X` is accepted. Any run that includes `scanvi` or `panhumanpy` still requires raw counts in `adata.X`.
+
 Queries are never combined. There is no cross-query summary, and no query influences another's labels.
 
 Models are trained from the reference rather than from a reference-query intersection, but their final feature space is narrower than the reference: CellTypist keeps a per-label subset after feature selection, and scVI keeps `--scanvi_hvg_n_top_genes` highly variable genes. A query that lacks some of those features has them zero-filled when it is aligned to the model.

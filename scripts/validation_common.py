@@ -84,6 +84,160 @@ def require_raw_count_matrix(handle: h5py.File, label: str) -> None:
             )
 
 
+try:
+    from anndata.io import sparse_dataset
+except ImportError:  # anndata < 0.11
+    from anndata.experimental import sparse_dataset
+
+
+CELLTYPIST_TARGET_SUM = 1e4
+CELLTYPIST_SUM_TOLERANCE = 1e-2
+CELLTYPIST_SAMPLE_BLOCKS = 5
+CELLTYPIST_SAMPLE_BLOCK_ROWS = 200
+# Locations checked, in order, for the matrix CellTypist is given.
+CELLTYPIST_MATRIX_LOCATIONS = ("X", "layers/counts", "raw/X")
+
+
+def sample_row_indices(n_rows: int) -> np.ndarray:
+    starts = np.linspace(0, max(0, n_rows - CELLTYPIST_SAMPLE_BLOCK_ROWS), CELLTYPIST_SAMPLE_BLOCKS)
+    rows = {
+        row
+        for start in starts
+        for row in range(int(start), min(n_rows, int(start) + CELLTYPIST_SAMPLE_BLOCK_ROWS))
+    }
+    return np.array(sorted(rows), dtype=np.int64)
+
+
+def sample_csc_values(node: h5py.Group) -> np.ndarray:
+    """A few contiguous runs of stored values from a CSC matrix.
+
+    Per-cell totals need every gene, and a CSC matrix stores genes contiguously, so cells
+    cannot be sampled without reading the whole file. The stored values are enough to tell
+    counts from normalised expression, so only those are read.
+    """
+    data = node["data"]
+    run = CELLTYPIST_SAMPLE_BLOCKS * CELLTYPIST_SAMPLE_BLOCK_ROWS * 100
+    starts = np.linspace(0, max(0, data.shape[0] - run), CELLTYPIST_SAMPLE_BLOCKS)
+    return np.concatenate([data[int(start) : int(start) + run] for start in starts])
+
+
+def is_csc(node) -> bool:
+    encoding = node.attrs.get("encoding-type", "csr_matrix")
+    if isinstance(encoding, bytes):
+        encoding = encoding.decode()
+    return encoding == "csc_matrix"
+
+
+def sample_matrix_rows(handle: h5py.File, location: str) -> np.ndarray | None:
+    """Return a dense sample of rows from a matrix in an h5ad, or None if it is absent."""
+    if location not in handle:
+        return None
+
+    node = handle[location]
+    if isinstance(node, h5py.Dataset):
+        rows = sample_row_indices(node.shape[0])
+        return np.vstack([np.asarray(node[start : stop]) for start, stop in _contiguous_runs(rows)])
+    if isinstance(node, h5py.Group) and "indptr" in node and not is_csc(node):
+        matrix = sparse_dataset(node)
+        rows = sample_row_indices(matrix.shape[0])
+        return np.vstack([matrix[start:stop].toarray() for start, stop in _contiguous_runs(rows)])
+    return None
+
+
+def _contiguous_runs(rows: np.ndarray):
+    breaks = np.flatnonzero(np.diff(rows) != 1) + 1
+    for run in np.split(rows, breaks):
+        yield int(run[0]), int(run[-1]) + 1
+
+
+def looks_like_log1p_normalised(values: np.ndarray) -> bool:
+    """True when expm1 of every sampled cell sums to the CellTypist target of 10,000."""
+    if values.size == 0 or not np.isfinite(values).all() or (values < 0).any():
+        return False
+    totals = np.expm1(values.astype(np.float64)).sum(axis=1)
+    return bool(np.allclose(totals, CELLTYPIST_TARGET_SUM, rtol=CELLTYPIST_SUM_TOLERANCE))
+
+
+def looks_like_raw_counts(values: np.ndarray) -> bool:
+    if values.size == 0 or not np.isfinite(values).all() or (values < 0).any():
+        return False
+    return bool((np.abs(values - np.rint(values)) <= INTEGER_TOLERANCE).all())
+
+
+def classify_celltypist_matrix(handle: h5py.File, location: str) -> str | None:
+    """Return 'normalised', 'counts', or None for the matrix at a location.
+
+    Dense and CSR matrices are classified from a sample of cells, with the exact check that
+    expm1 sums to 10,000 per cell. CSC matrices are classified from stored values alone,
+    where normalised means non-integer and no larger than log1p(10,000); the exact per-cell
+    check for those is left to the annotation step, which has the matrix in memory.
+    """
+    if location not in handle:
+        return None
+    node = handle[location]
+
+    if isinstance(node, h5py.Group) and "indptr" in node and is_csc(node):
+        values = sample_csc_values(node)
+        if values.size == 0 or not np.isfinite(values).all() or (values < 0).any():
+            return None
+        if looks_like_raw_counts(values):
+            return "counts"
+        if values.max() <= np.log1p(CELLTYPIST_TARGET_SUM) + 1e-3:
+            return "normalised"
+        return None
+
+    sample = sample_matrix_rows(handle, location)
+    if sample is None:
+        return None
+    if looks_like_log1p_normalised(sample):
+        return "normalised"
+    if looks_like_raw_counts(sample):
+        return "counts"
+    return None
+
+
+def select_celltypist_matrix(handle: h5py.File, label: str) -> tuple[str, bool]:
+    """Pick the matrix CellTypist should use and say whether it is already normalised.
+
+    CellTypist needs log1p expression normalised to 10,000 counts per cell. X is used as
+    it is when it already has that form. Otherwise raw counts are taken from X,
+    layers['counts'], or raw.X, in that order, and normalised by the caller. Returns the
+    HDF5 location of the matrix and whether it needs no further normalisation.
+    """
+    x_kind = classify_celltypist_matrix(handle, "X")
+    if x_kind == "normalised":
+        return "X", True
+
+    for location in CELLTYPIST_MATRIX_LOCATIONS:
+        kind = x_kind if location == "X" else classify_celltypist_matrix(handle, location)
+        if kind == "counts":
+            return location, False
+
+    raise ValueError(
+        f"{label} has no usable expression matrix for CellTypist. CellTypist needs log1p "
+        "expression normalised to 10,000 counts per cell, or raw integer counts to "
+        "normalise. adata.X is neither, and no raw counts were found in "
+        "adata.layers['counts'] or adata.raw.X."
+    )
+
+
+def log1p_totals_are_normalised(matrix, rows_per_chunk: int = 100_000) -> bool:
+    """Exact check, over every cell, that expm1 of a loaded matrix sums to 10,000 per cell."""
+    from scipy import sparse
+
+    for start in range(0, matrix.shape[0], rows_per_chunk):
+        chunk = matrix[start : start + rows_per_chunk]
+        if sparse.issparse(chunk):
+            chunk = chunk.copy()
+            chunk.data = np.expm1(chunk.data.astype(np.float64))
+            totals = np.asarray(chunk.sum(axis=1)).ravel()
+        else:
+            totals = np.expm1(np.asarray(chunk, dtype=np.float64)).sum(axis=1)
+        if not np.allclose(totals, CELLTYPIST_TARGET_SUM, rtol=CELLTYPIST_SUM_TOLERANCE):
+            return False
+    return True
+
+
 def require_obs_column(adata: ad.AnnData, column: str, label: str) -> None:
     if column not in adata.obs:
         raise ValueError(f"Missing required obs column '{column}' in {label}")

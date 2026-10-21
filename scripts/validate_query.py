@@ -22,6 +22,7 @@ from validation_common import (
     read_gene_list,
     require_obs_column,
     require_raw_count_matrix,
+    select_celltypist_matrix,
     require_unique_index,
     require_unique_var_index,
     resolve_setup_keys,
@@ -83,7 +84,14 @@ def main():
         raise FileNotFoundError(f"Query h5ad not found: {query_path}")
 
     with h5py.File(query_path, "r") as query_handle:
-        require_raw_count_matrix(query_handle, f"query h5ad '{args.sample_id}'")
+        query_label = f"query h5ad '{args.sample_id}'"
+        if tools == {"celltypist"}:
+            # CellTypist alone also accepts X that is already log1p-normalised, or raw
+            # counts held in layers['counts'] or raw.X.
+            select_celltypist_matrix(query_handle, query_label)
+        else:
+            require_raw_count_matrix(query_handle, query_label)
+
     query = ad.read_h5ad(query_path, backed="r")
 
     require_unique_index(query, f"Query '{args.sample_id}'")

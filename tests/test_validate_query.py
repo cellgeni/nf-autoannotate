@@ -190,6 +190,41 @@ class ValidateQueryTests(unittest.TestCase):
 
         self.assertTrue(manifest["merge_annotations"])
 
+    def test_celltypist_only_accepts_normalised_x(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            query_path = write_query(tmp / "donor1.h5ad", REFERENCE_GENES)
+            query = ad.read_h5ad(query_path)
+            counts = np.array([[5, 0, 15, 5], [1, 9, 0, 2], [0, 4, 4, 1], [3, 3, 3, 3]], dtype=np.float32)
+            query.X = np.log1p(counts / counts.sum(axis=1, keepdims=True) * 1e4).astype(np.float32)
+            query.write_h5ad(query_path)
+
+            manifest = self.run_cli(tmp, "--query-h5ad", str(query_path), "--tools", "celltypist")
+
+        self.assertEqual(manifest["sample_id"], "donor1")
+
+    def test_normalised_x_is_rejected_when_another_tool_needs_counts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            query_path = write_query(tmp / "donor1.h5ad", REFERENCE_GENES)
+            query = ad.read_h5ad(query_path)
+            query.X = np.full((4, 4), 2.5, dtype=np.float32)
+            query.write_h5ad(query_path)
+
+            with self.assertRaisesRegex(ValueError, "raw counts"):
+                self.run_cli(tmp, "--query-h5ad", str(query_path), "--tools", "celltypist,scanvi")
+
+    def test_celltypist_only_without_any_raw_counts_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            query_path = write_query(tmp / "donor1.h5ad", REFERENCE_GENES)
+            query = ad.read_h5ad(query_path)
+            query.X = np.full((4, 4), 2.5, dtype=np.float32)
+            query.write_h5ad(query_path)
+
+            with self.assertRaisesRegex(ValueError, "no usable expression matrix for CellTypist"):
+                self.run_cli(tmp, "--query-h5ad", str(query_path), "--tools", "celltypist")
+
     def test_scanvi_options_without_scanvi_selected_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

@@ -5,9 +5,12 @@ import sys
 
 import scanpy as sc
 import celltypist
+import h5py
 import numpy as np
 import pandas as pd
 from scipy import sparse
+
+from validation_common import log1p_totals_are_normalised, select_celltypist_matrix
 
 MIN_MODEL_GENE_OVERLAP_FRACTION = 0.8
 
@@ -60,10 +63,27 @@ def confidence_for_labels(probability_matrix: pd.DataFrame, labels: pd.Series) -
 def main():
     args = parse_args()
 
+    with h5py.File(args.query_h5ad, "r") as handle:
+        location, already_normalised = select_celltypist_matrix(handle, f"query h5ad '{args.query_h5ad}'")
+
     query = sc.read_h5ad(args.query_h5ad)
+    if location == "layers/counts":
+        query.X = query.layers["counts"]
+    elif location == "raw/X":
+        query = query.raw.to_adata()
     query.var_names_make_unique()
-    sc.pp.normalize_total(query, target_sum=1e4)
-    sc.pp.log1p(query)
+    if already_normalised and not log1p_totals_are_normalised(query.X):
+        raise ValueError(
+            "adata.X looks log1p-normalised, but expm1 of the cells does not sum to 10,000. "
+            "Provide X normalised to 10,000 counts per cell, or raw counts in "
+            "adata.layers['counts'] or adata.raw.X."
+        )
+    if already_normalised:
+        print("CellTypist input: adata.X is already log1p-normalised to 10,000 counts per cell", file=sys.stderr)
+    else:
+        print(f"CellTypist input: normalising raw counts from {location}", file=sys.stderr)
+        sc.pp.normalize_total(query, target_sum=1e4)
+        sc.pp.log1p(query)
 
     model = celltypist.models.Model.load(args.model_path)
     model_genes = list(model.classifier.features)
