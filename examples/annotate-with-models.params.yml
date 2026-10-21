@@ -1,0 +1,37 @@
+# Params file for annotating queries from models that already exist. Copy this file, edit
+# the values, then launch with:
+#
+#   nextflow run main.nf -entry ANNOTATE_WITH_MODELS -params-file your-run.params.yml
+#
+# The sheet names every tool, model, and query for the run, so tools, query_h5ad, ref_h5ad,
+# ref_label_col, ref_filter_*, celltypist_model, scanvi_model_dir, and
+# scvi_reference_model_dir are not used here. Supplying one of them is an error rather than
+# a silent no-op. See examples/model_sheet.csv for the sheet format.
+model_sheet: /path/to/model_sheet.csv
+project_tag: annotate_run
+outdir: results/annotate_run
+
+# Each pair runs a single tool, so merging is off by default and every pair publishes its
+# prediction table alone. Set this to true to also write the annotated h5ad, the cluster
+# annotation summary, and the marker genes for each pair - the slowest part of a run.
+merge_annotations: false
+
+# Only read when merge_annotations is true
+query_cluster_col: leiden
+compute_missing_clusters: false
+marker_genes_n_top: 50
+marker_genes_method: wilcoxon
+marker_dotplot: true
+marker_dotplot_n_top: 5
+
+# Output column names for scANVI rows
+scanvi_obs_col: scanvi_label
+scanvi_score_col: scanvi_confidence
+
+# Query-mapping controls for scANVI rows
+scanvi_query_max_epochs: 100
+scanvi_query_check_val_every_n_epoch: 10
+scanvi_query_plan_weight_decay: 0.0
+
+# Optional var column holding gene symbols, for panhumanpy rows
+panhumanpy_feature_names_col: null

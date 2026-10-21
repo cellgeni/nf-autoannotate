@@ -108,6 +108,15 @@
             "null"
           ],
           "description": "Reference obs column containing cell type labels. Required when tools includes celltypist or scanvi."
+        },
+        "model_sheet": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "CSV or TSV with one (model, query) pair per row, read only by the ANNOTATE_WITH_MODELS entry point. Columns: tool, model, query_h5ad, and optionally model_id. A tab in the header selects TSV parsing.",
+          "format": "file-path",
+          "exists": true
         }
       }
     },
@@ -562,6 +571,13 @@
           ],
           "description": "Compute Leiden clusters if query_cluster_col is absent.",
           "default": false
+        },
+        "merge_annotations": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Merge per-tool predictions into the query h5ad and write the cluster summary and marker genes. Unset defaults to true for the default workflow and false for ANNOTATE_WITH_MODELS, where each pair runs a single tool. Set false to publish the per-tool prediction tables alone, which skips the most expensive step of a run."
         },
         "marker_genes_n_top": {
           "type": [

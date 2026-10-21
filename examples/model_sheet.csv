@@ -1,0 +1,24 @@
+# Model sheet for the ANNOTATE_WITH_MODELS entry point.
+#
+#   nextflow run main.nf -entry ANNOTATE_WITH_MODELS -params-file your-run.params.yml
+#
+# One row per (model, query) pair. Repeat a model to run it over several queries, and give
+# each model a model_id: the pair's outputs go to <outdir>/<sample_id>.<model_id>/, and
+# every model this pipeline trains is called celltypist_model.pkl or scanvi_model, so the
+# default ID collides as soon as two training runs are combined.
+#
+# Columns
+#   tool        celltypist, scanvi, or panhumanpy
+#   model       celltypist_model.pkl file, or scanvi_model directory. Empty for panhumanpy,
+#               which carries its own model.
+#   model_id    optional; defaults to the model file or directory name
+#   query_h5ad  one query path, or a glob that expands to one pair per match
+#
+# Blank lines and lines starting with # are ignored. Fields are split on the delimiter with
+# no quoting rules, so a path cannot contain a comma. Save the file with tabs in the header
+# instead of commas to have it read as a TSV.
+tool,model,model_id,query_h5ad
+celltypist,/path/to/gut-run/celltypist_model.pkl,gut_ct,/data/obj1.h5ad
+celltypist,/path/to/gut-run/celltypist_model.pkl,gut_ct,/data/obj2.h5ad
+scanvi,/path/to/lung-run/scanvi_model,lung_scanvi,/data/obj3.h5ad
+panhumanpy,,,/data/donors/*.h5ad

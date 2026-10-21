@@ -45,6 +45,7 @@ def parse_args():
     parser.add_argument("--panhumanpy-feature-names-col")
     parser.add_argument("--query-cluster-col", required=True)
     parser.add_argument("--compute-missing-clusters", action="store_true")
+    parser.add_argument("--skip-merge", action="store_true")
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -53,7 +54,13 @@ def require_query_cluster_column(
     query: ad.AnnData,
     query_cluster_col: str,
     compute_missing_clusters: bool,
+    merge_annotations: bool,
 ) -> None:
+    if not merge_annotations:
+        # The cluster column is only read by the merge step, for the cluster summary and
+        # the marker gene table. Demanding it from a run that publishes predictions alone
+        # would reject queries over a column nothing is going to look at.
+        return
     if compute_missing_clusters:
         return
     require_obs_column(query, query_cluster_col, "query h5ad")
@@ -77,7 +84,6 @@ def main():
 
     with h5py.File(query_path, "r") as query_handle:
         require_raw_count_matrix(query_handle, f"query h5ad '{args.sample_id}'")
-
     query = ad.read_h5ad(query_path, backed="r")
 
     require_unique_index(query, f"Query '{args.sample_id}'")
@@ -111,7 +117,12 @@ def main():
                 f"in query h5ad '{args.sample_id}'"
             )
 
-    require_query_cluster_column(query, args.query_cluster_col, args.compute_missing_clusters)
+    require_query_cluster_column(
+        query,
+        args.query_cluster_col,
+        args.compute_missing_clusters,
+        not args.skip_merge,
+    )
 
     query_gene_id_type = infer_gene_id_type(query.var_names)
     query_genes = {str(gene) for gene in query.var_names}
@@ -164,6 +175,7 @@ def main():
         "panhumanpy_feature_names_col": args.panhumanpy_feature_names_col,
         "query_cluster_col": args.query_cluster_col,
         "compute_missing_clusters": args.compute_missing_clusters,
+        "merge_annotations": not args.skip_merge,
         "gene_id_type": query_gene_id_type,
         "query_gene_count": len(query_genes),
         "query_cell_count": int(query.n_obs),

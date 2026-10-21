@@ -160,6 +160,36 @@ class ValidateQueryTests(unittest.TestCase):
 
         self.assertTrue(manifest["compute_missing_clusters"])
 
+    def test_missing_cluster_column_is_allowed_when_the_merge_step_is_skipped(self):
+        # Only the merge step reads the cluster column, so a predictions-only run must not
+        # be blocked by its absence.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            query_path = write_query(tmp / "donor1.h5ad", REFERENCE_GENES, with_cluster=False)
+
+            manifest = self.run_cli(
+                tmp,
+                "--query-h5ad", str(query_path),
+                "--tools", "celltypist",
+                "--skip-merge",
+            )
+
+        self.assertFalse(manifest["merge_annotations"])
+        self.assertFalse(manifest["compute_missing_clusters"])
+
+    def test_merge_is_recorded_in_the_manifest_by_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            query_path = write_query(tmp / "donor1.h5ad", REFERENCE_GENES)
+
+            manifest = self.run_cli(
+                tmp,
+                "--query-h5ad", str(query_path),
+                "--tools", "celltypist",
+            )
+
+        self.assertTrue(manifest["merge_annotations"])
+
     def test_scanvi_options_without_scanvi_selected_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

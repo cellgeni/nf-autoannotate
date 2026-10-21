@@ -37,6 +37,11 @@ scanvi_obs_col: scanvi_label
 scanvi_score_col: scanvi_confidence
 query_cluster_col: leiden
 compute_missing_clusters: false
+
+# Merge the per-tool predictions into the query h5ad and build the cluster summary and
+# marker genes. Set false to publish the prediction tables alone, which skips the slowest
+# and most memory-hungry step of a run. query_cluster_col is then not required either.
+merge_annotations: true
 marker_genes_n_top: 50
 marker_genes_method: wilcoxon
 marker_dotplot: true
