@@ -12,14 +12,15 @@ import json
 import sys
 from pathlib import Path
 
-import anndata as ad
 import h5py
 
 from validation_common import (
+    H5adMetadata,
     infer_gene_id_type,
     load_nf_scvi_metrics_config,
     parse_tools,
     read_gene_list,
+    read_h5ad_metadata,
     require_obs_column,
     require_raw_count_matrix,
     select_celltypist_matrix,
@@ -52,7 +53,7 @@ def parse_args():
 
 
 def require_query_cluster_column(
-    query: ad.AnnData,
+    query: H5adMetadata,
     query_cluster_col: str,
     compute_missing_clusters: bool,
     merge_annotations: bool,
@@ -91,8 +92,7 @@ def main():
             select_celltypist_matrix(query_handle, query_label)
         else:
             require_raw_count_matrix(query_handle, query_label)
-
-    query = ad.read_h5ad(query_path, backed="r")
+        query = read_h5ad_metadata(query_handle, query_label)
 
     require_unique_index(query, f"Query '{args.sample_id}'")
     require_unique_var_index(query, f"Query '{args.sample_id}'")
@@ -119,7 +119,7 @@ def main():
             raise ValueError(
                 "--panhumanpy-feature-names-col was provided but 'panhumanpy' is not among the selected tools"
             )
-        if args.panhumanpy_feature_names_col not in query.var:
+        if args.panhumanpy_feature_names_col not in query.var_columns:
             raise ValueError(
                 f"Missing required var column '{args.panhumanpy_feature_names_col}' "
                 f"in query h5ad '{args.sample_id}'"

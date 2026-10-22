@@ -288,6 +288,8 @@ The merge step also validates that every annotation CSV has unique `cell_id` val
 
 `-entry ANNOTATE_WITH_MODELS` validates its sheet before submitting any job; see [Annotating From Existing Models](#annotating-from-existing-models) for what it checks.
 
+Neither stage loads the AnnData object. Each opens the h5ad with `h5py` and reads the cell and gene indices plus the names of the `obs` and `var` columns and of the layers. The only column values read are those of `ref_filter_col`, when reference filtering is requested. The raw-count check reads `X` in chunks, or samples rows of it for a CellTypist-only run. Validation memory therefore tracks the number of cells, not how many layers, embeddings, or metadata columns the file carries. On a 758,815-cell query, query validation peaked under 600 MB, against 33 GB when the file was opened with `anndata.read_h5ad(backed="r")`.
+
 ## Outputs
 
 Shared reference and model artifacts are published at the top of the output directory, and each query gets its own subdirectory named after its sample ID:

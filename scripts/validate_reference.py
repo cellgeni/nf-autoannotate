@@ -10,12 +10,14 @@ import argparse
 import json
 from pathlib import Path
 
-import anndata as ad
+import h5py
 
 from validation_common import (
     infer_gene_id_type,
     load_nf_scvi_metrics_config,
     parse_filter_values,
+    read_h5ad_metadata,
+    read_obs_column,
     require_obs_column,
     require_unique_index,
     require_unique_var_index,
@@ -54,7 +56,8 @@ def main():
     if not ref_path.exists():
         raise FileNotFoundError(f"Reference h5ad not found: {ref_path}")
 
-    ref = ad.read_h5ad(ref_path, backed="r")
+    with h5py.File(ref_path, "r") as ref_handle:
+        ref = read_h5ad_metadata(ref_handle, "reference h5ad")
 
     require_obs_column(ref, args.ref_label_col, "reference h5ad")
     require_unique_index(ref, "Reference")
@@ -76,14 +79,16 @@ def main():
     filtered_ref_cell_count = int(ref.n_obs)
     if ref_filter_col:
         require_obs_column(ref, ref_filter_col, "reference h5ad")
-        available_filter_values = sorted({str(value) for value in ref.obs[ref_filter_col].astype(str)})
+        with h5py.File(ref_path, "r") as ref_handle:
+            ref_filter_column = read_obs_column(ref_handle, ref_filter_col).astype(str)
+        available_filter_values = sorted(set(ref_filter_column))
         missing_filter_values = sorted(set(ref_filter_values) - set(available_filter_values))
         if missing_filter_values:
             raise ValueError(
                 "Requested reference filter values were not found in "
                 f"'{ref_filter_col}': {', '.join(missing_filter_values)}"
             )
-        filtered_ref_cell_count = int(ref.obs[ref_filter_col].astype(str).isin(ref_filter_values).sum())
+        filtered_ref_cell_count = int(ref_filter_column.isin(ref_filter_values).sum())
         if filtered_ref_cell_count == 0:
             raise ValueError("Reference filtering removed all cells")
 

@@ -4,11 +4,16 @@
 
 import re
 import runpy
+from dataclasses import dataclass
 
 import h5py
 import numpy as np
+import pandas as pd
 
-import anndata as ad
+try:
+    from anndata.io import read_elem
+except ImportError:  # anndata < 0.11
+    from anndata.experimental import read_elem
 
 
 MATRIX_CHUNK_SIZE = 1_000_000
@@ -238,18 +243,69 @@ def log1p_totals_are_normalised(matrix, rows_per_chunk: int = 100_000) -> bool:
     return True
 
 
-def require_obs_column(adata: ad.AnnData, column: str, label: str) -> None:
-    if column not in adata.obs:
+@dataclass
+class H5adMetadata:
+    """The cell and gene indices of an h5ad, and the names of its columns and layers."""
+
+    obs_names: pd.Index
+    var_names: pd.Index
+    obs_columns: set[str]
+    var_columns: set[str]
+    layers: set[str]
+
+    @property
+    def n_obs(self) -> int:
+        return len(self.obs_names)
+
+
+def dataframe_index_key(group: h5py.Group) -> str:
+    return str(group.attrs.get("_index", "_index"))
+
+
+def dataframe_columns(group: h5py.Group) -> set[str]:
+    index_key = dataframe_index_key(group)
+    column_order = group.attrs.get("column-order")
+    columns = group.keys() if column_order is None else np.atleast_1d(column_order)
+    return {str(column) for column in columns if str(column) not in (index_key, "__categories")}
+
+
+def require_dataframe_group(handle: h5py.File, key: str, label: str) -> h5py.Group:
+    if key not in handle or not isinstance(handle[key], h5py.Group):
+        raise ValueError(f"Missing required /{key} table in {label}")
+    return handle[key]
+
+
+def read_h5ad_metadata(handle: h5py.File, label: str) -> H5adMetadata:
+    # Reads the two indices and the column and layer names only. Validation never needs
+    # the column values, and decoding every obs column (ad.read_h5ad does, even backed)
+    # costs memory in proportion to how much metadata the object carries.
+    obs = require_dataframe_group(handle, "obs", label)
+    var = require_dataframe_group(handle, "var", label)
+    return H5adMetadata(
+        obs_names=pd.Index(read_elem(obs[dataframe_index_key(obs)])),
+        var_names=pd.Index(read_elem(var[dataframe_index_key(var)])),
+        obs_columns=dataframe_columns(obs),
+        var_columns=dataframe_columns(var),
+        layers=set(handle["layers"]) if "layers" in handle else set(),
+    )
+
+
+def read_obs_column(handle: h5py.File, column: str) -> pd.Series:
+    return pd.Series(read_elem(handle["obs"][column]))
+
+
+def require_obs_column(metadata: H5adMetadata, column: str, label: str) -> None:
+    if column not in metadata.obs_columns:
         raise ValueError(f"Missing required obs column '{column}' in {label}")
 
 
-def require_unique_index(adata: ad.AnnData, label: str) -> None:
-    if not adata.obs_names.is_unique:
+def require_unique_index(metadata: H5adMetadata, label: str) -> None:
+    if not metadata.obs_names.is_unique:
         raise ValueError(f"{label} cell indices are not unique")
 
 
-def require_unique_var_index(adata: ad.AnnData, label: str) -> None:
-    if not adata.var_names.is_unique:
+def require_unique_var_index(metadata: H5adMetadata, label: str) -> None:
+    if not metadata.var_names.is_unique:
         raise ValueError(f"{label} gene indices are not unique")
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import anndata as ad
 import h5py
 import numpy as np
+import pandas as pd
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
@@ -142,12 +143,59 @@ class GeneIdentifierTests(unittest.TestCase):
         self.assertEqual(validation_common.infer_gene_id_type(["TP53", "BRCA1"]), "symbol")
 
 
+class H5adMetadataTests(unittest.TestCase):
+    def write_h5ad(self, path: Path) -> None:
+        adata = ad.AnnData(
+            X=np.zeros((3, 2), dtype=np.float32),
+            obs=pd.DataFrame(
+                {"cell_type": pd.Categorical(["A", "B", "A"]), "donor": ["d1", "d2", "d3"]},
+                index=["cell-1", "cell-2", "cell-3"],
+            ),
+            var=pd.DataFrame({"gene_symbol": ["A", "B"]}, index=["GENE1", "GENE2"]),
+            layers={"counts": np.zeros((3, 2), dtype=np.float32)},
+        )
+        adata.write_h5ad(path)
+
+    def test_reads_indices_and_column_and_layer_names(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "query.h5ad"
+            self.write_h5ad(path)
+
+            with h5py.File(path, "r") as handle:
+                metadata = validation_common.read_h5ad_metadata(handle, "query h5ad")
+                cell_types = validation_common.read_obs_column(handle, "cell_type")
+
+        self.assertEqual(list(metadata.obs_names), ["cell-1", "cell-2", "cell-3"])
+        self.assertEqual(list(metadata.var_names), ["GENE1", "GENE2"])
+        self.assertEqual(metadata.obs_columns, {"cell_type", "donor"})
+        self.assertEqual(metadata.var_columns, {"gene_symbol"})
+        self.assertEqual(metadata.layers, {"counts"})
+        self.assertEqual(metadata.n_obs, 3)
+        self.assertEqual(list(cell_types.astype(str)), ["A", "B", "A"])
+
+    def test_missing_obs_table_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "query.h5ad"
+            with h5py.File(path, "w") as handle:
+                handle.create_dataset("X", data=np.zeros((2, 2)))
+
+            with h5py.File(path, "r") as handle:
+                with self.assertRaisesRegex(ValueError, "Missing required /obs table in query h5ad"):
+                    validation_common.read_h5ad_metadata(handle, "query h5ad")
+
+
 class ObsColumnTests(unittest.TestCase):
     def test_missing_obs_column_is_reported_with_its_label(self):
-        adata = ad.AnnData(obs={"cell_type": ["A", "B"]})
+        metadata = validation_common.H5adMetadata(
+            obs_names=pd.Index(["cell-1", "cell-2"]),
+            var_names=pd.Index(["GENE1"]),
+            obs_columns={"cell_type"},
+            var_columns=set(),
+            layers=set(),
+        )
 
         with self.assertRaisesRegex(ValueError, "Missing required obs column 'donor' in reference h5ad"):
-            validation_common.require_obs_column(adata, "donor", "reference h5ad")
+            validation_common.require_obs_column(metadata, "donor", "reference h5ad")
 
 
 if __name__ == "__main__":
