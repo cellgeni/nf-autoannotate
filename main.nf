@@ -119,6 +119,10 @@ if( runScanvi && params.scanvi_hvg_n_top_genes.toInteger() < 0 ) {
 if( params.scanvi_model_dir && params.scvi_reference_model_dir ) {
     error "Use either --scanvi_model_dir for a pretrained scANVI model or --scvi_reference_model_dir to initialize scANVI training from a pretrained scVI reference model, not both"
 }
+def celltypistMinOverlap = params.celltypist_min_model_gene_overlap.toString().toDouble()
+if( celltypistMinOverlap < 0 || celltypistMinOverlap > 1 ) {
+    error "Invalid --celltypist_min_model_gene_overlap ${params.celltypist_min_model_gene_overlap}. Expected a fraction between 0 and 1"
+}
 if( params.marker_genes_n_top.toInteger() < 1 ) {
     error "Invalid --marker_genes_n_top ${params.marker_genes_n_top}. Expected a positive integer"
 }
@@ -351,7 +355,8 @@ process CELLTYPIST_ANNOTATE {
     python3 ${projectDir}/scripts/annotate_celltypist.py \
         --query-h5ad ${query_h5ad} \
         --model-path ${celltypist_model} \
-        --output celltypist_predictions.csv
+        --output celltypist_predictions.csv \
+        --min-model-gene-overlap ${params.celltypist_min_model_gene_overlap}
     """
 }
 

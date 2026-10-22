@@ -526,6 +526,16 @@
           ],
           "description": "Train CellTypist models on a GPU. Set false to train on CPU. Annotation always runs on CPU.",
           "default": true
+        },
+        "celltypist_min_model_gene_overlap": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Minimum fraction of the CellTypist model's genes that must be present in the query. Below it, annotation fails. Missing genes are zero-filled, so lowering it trades prediction quality for being able to annotate at all.",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.8
         }
       }
     },

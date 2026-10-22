@@ -97,3 +97,4 @@ celltypist_feature_selection_top_genes: 100
 celltypist_feature_selection_max_iter: 5
 celltypist_max_iter: 100
 celltypist_use_gpu: true
+celltypist_min_model_gene_overlap: 0.8

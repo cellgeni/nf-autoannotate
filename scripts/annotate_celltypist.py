@@ -12,7 +12,7 @@ from scipy import sparse
 
 from validation_common import log1p_totals_are_normalised, select_celltypist_matrix
 
-MIN_MODEL_GENE_OVERLAP_FRACTION = 0.8
+DEFAULT_MIN_MODEL_GENE_OVERLAP_FRACTION = 0.8
 
 
 def parse_args():
@@ -20,7 +20,16 @@ def parse_args():
     parser.add_argument("--query-h5ad", required=True)
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--output", required=True)
-    return parser.parse_args()
+    parser.add_argument(
+        "--min-model-gene-overlap",
+        type=float,
+        default=DEFAULT_MIN_MODEL_GENE_OVERLAP_FRACTION,
+        help="Minimum fraction of model genes that must be present in the query.",
+    )
+    args = parser.parse_args()
+    if not 0 <= args.min_model_gene_overlap <= 1:
+        parser.error("--min-model-gene-overlap must be between 0 and 1")
+    return args
 
 
 def align_adata_to_gene_list(adata: sc.AnnData, genes: list[str]) -> sc.AnnData:
@@ -90,18 +99,28 @@ def main():
     query_gene_set = set(query.var_names)
     overlapping_genes = [gene for gene in model_genes if gene in query_gene_set]
     overlap_fraction = len(overlapping_genes) / len(model_genes) if model_genes else 0.0
-    if overlap_fraction < MIN_MODEL_GENE_OVERLAP_FRACTION:
+    if not overlapping_genes:
+        raise ValueError("No genes overlap between the query and the CellTypist model")
+    if overlap_fraction < args.min_model_gene_overlap:
         raise ValueError(
             "Only "
             f"{len(overlapping_genes)}/{len(model_genes)} CellTypist model genes "
             f"({overlap_fraction:.1%}) are present in the query; expected at least "
-            f"{MIN_MODEL_GENE_OVERLAP_FRACTION:.0%}. Check gene identifier compatibility."
+            f"{args.min_model_gene_overlap:.0%}. Check that both use the same gene identifiers, "
+            "and whether genes were filtered out of the query. To annotate anyway, lower "
+            "--celltypist_min_model_gene_overlap."
         )
     print(
         "CellTypist model gene overlap: "
         f"{len(overlapping_genes)}/{len(model_genes)} ({overlap_fraction:.1%})",
         file=sys.stderr,
     )
+    if overlap_fraction < DEFAULT_MIN_MODEL_GENE_OVERLAP_FRACTION:
+        print(
+            f"WARNING: annotating with {overlap_fraction:.1%} of CellTypist model genes present. "
+            "The missing genes are zero-filled, which degrades predictions.",
+            file=sys.stderr,
+        )
 
     aligned_query = align_adata_to_gene_list(query, model_genes)
     # Runs on CPU. CellTypist's use_GPU only affects majority-voting over-clustering, and its GPU

@@ -24,6 +24,9 @@ marker_genes_method: wilcoxon
 marker_dotplot: true
 marker_dotplot_n_top: 5
 
+# Minimum fraction of a CellTypist model's genes the query must contain
+celltypist_min_model_gene_overlap: 0.8
+
 # Output column names for scANVI rows
 scanvi_obs_col: scanvi_label
 scanvi_score_col: scanvi_confidence

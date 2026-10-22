@@ -100,7 +100,7 @@ Models are trained from the reference rather than from a reference-query interse
 Two separate numbers are reported as a result:
 
 - **Reference coverage**, recorded per query in `<sample_id>.query_manifest.json` and warned on below 80%. This is a broad diagnostic against the whole reference gene space, not a statement about model compatibility.
-- **Model gene overlap**, printed by each annotation step against that model's actual feature list. This is the authoritative check: CellTypist fails outright below 80%, and scANVI warns.
+- **Model gene overlap**, printed by each annotation step against that model's actual feature list. This is the authoritative check: CellTypist fails below `--celltypist_min_model_gene_overlap` (80% by default), and scANVI warns below 80%.
 
 A query can show good reference coverage and still overlap poorly with a model's selected features, so treat the per-model number as the one that matters.
 
@@ -207,8 +207,9 @@ CellTypist optional controls:
 - `--celltypist_feature_selection_max_iter`: quick SGD feature-selection iterations. Default: `5`.
 - `--celltypist_max_iter`: final CellTypist fit iterations. Default: `100`.
 - `--celltypist_use_gpu`: train CellTypist models on the GPU queue. Default: `true`. Set `false` to train on CPU queues. On GPU, the final model fit uses cuML logistic regression; feature selection still runs on CPU, because CellTypist fits it with SGD. Training fails if the container lacks cuML, rather than falling back to CPU while holding a GPU. GPU and CPU training can give slightly different models, because the logistic regression solvers differ. Annotation always runs on CPU: CellTypist predicts on CPU regardless, and its GPU option only covers the majority-voting over-clustering, whose GPU path fails in CellTypist 1.7.1 when it has to build the neighbour graph itself.
+- `--celltypist_min_model_gene_overlap`: minimum fraction of the model's genes that must be present in the query. Default: `0.8`.
 
-CellTypist model reuse checks that at least 80% of model genes are present in the query. This catches gene identifier mismatches before silently filling most model features with zeros.
+CellTypist annotation checks that at least `--celltypist_min_model_gene_overlap` of the model's genes are present in the query, and fails otherwise. This catches gene identifier mismatches before most model features are silently filled with zeros. A query can also fall short for a legitimate reason, such as an object whose genes were reduced to those shared by every sample. In that case, lower the threshold to annotate anyway. Missing genes are still zero-filled, so predictions degrade as the overlap falls, and the step logs a warning whenever it annotates below 80%. Annotation always fails when the query shares no genes with the model.
 
 scANVI optional controls:
 
