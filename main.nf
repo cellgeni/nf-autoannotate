@@ -327,7 +327,8 @@ process CELLTYPIST_TRAIN_MODEL {
         --feature-selection-top-genes ${params.celltypist_feature_selection_top_genes} \
         --feature-selection-max-iter ${params.celltypist_feature_selection_max_iter} \
         --max-iter ${params.celltypist_max_iter} \
-        ${params.celltypist_feature_selection ? '--feature-selection' : ''}
+        ${params.celltypist_feature_selection ? '--feature-selection' : ''} \
+        ${params.celltypist_use_gpu ? '--use-gpu' : ''}
     """
 }
 

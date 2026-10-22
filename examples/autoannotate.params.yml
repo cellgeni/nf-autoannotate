@@ -96,3 +96,4 @@ celltypist_feature_selection: true
 celltypist_feature_selection_top_genes: 100
 celltypist_feature_selection_max_iter: 5
 celltypist_max_iter: 100
+celltypist_use_gpu: true

@@ -518,6 +518,14 @@
           "description": "Final CellTypist model fitting iterations.",
           "minimum": 1,
           "default": 100
+        },
+        "celltypist_use_gpu": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Train CellTypist models on a GPU. Set false to train on CPU. Annotation always runs on CPU.",
+          "default": true
         }
       }
     },

@@ -206,6 +206,7 @@ CellTypist optional controls:
 - `--celltypist_feature_selection_top_genes`: top genes per label for feature selection. Default: `100`.
 - `--celltypist_feature_selection_max_iter`: quick SGD feature-selection iterations. Default: `5`.
 - `--celltypist_max_iter`: final CellTypist fit iterations. Default: `100`.
+- `--celltypist_use_gpu`: train CellTypist models on the GPU queue. Default: `true`. Set `false` to train on CPU queues. On GPU, the final model fit uses cuML logistic regression; feature selection still runs on CPU, because CellTypist fits it with SGD. Training fails if the container lacks cuML, rather than falling back to CPU while holding a GPU. GPU and CPU training can give slightly different models, because the logistic regression solvers differ. Annotation always runs on CPU: CellTypist predicts on CPU regardless, and its GPU option only covers the majority-voting over-clustering, whose GPU path fails in CellTypist 1.7.1 when it has to build the neighbour graph itself.
 
 CellTypist model reuse checks that at least 80% of model genes are present in the query. This catches gene identifier mismatches before silently filling most model features with zeros.
 

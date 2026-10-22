@@ -104,6 +104,8 @@ def main():
     )
 
     aligned_query = align_adata_to_gene_list(query, model_genes)
+    # Runs on CPU. CellTypist's use_GPU only affects majority-voting over-clustering, and its GPU
+    # neighbour-graph construction calls scanpy's filter_genes on GPU arrays, which fails.
     predictions = celltypist.annotate(aligned_query, model=args.model_path, majority_voting=True)
 
     label_frame = predictions.predicted_labels

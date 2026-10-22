@@ -22,6 +22,7 @@ def parse_args():
     parser.add_argument("--feature-selection-top-genes", type=int, default=100)
     parser.add_argument("--feature-selection-max-iter", type=int, default=5)
     parser.add_argument("--max-iter", type=int, default=100)
+    parser.add_argument("--use-gpu", action="store_true")
     return parser.parse_args()
 
 
@@ -82,6 +83,16 @@ def apply_reference_filter(adata: sc.AnnData, manifest: dict) -> sc.AnnData:
 def main():
     args = parse_args()
 
+    if args.use_gpu:
+        # celltypist.train only warns and returns None when cuml is missing, so check up front.
+        try:
+            import cuml  # noqa: F401
+        except ImportError as error:
+            raise RuntimeError(
+                "CellTypist GPU training needs cuml, which is not installed. "
+                "Use a container with cuml, or run with --celltypist_use_gpu false."
+            ) from error
+
     with open(args.reference_manifest, "r", encoding="utf-8") as handle:
         manifest = json.load(handle)
 
@@ -125,6 +136,7 @@ def main():
         check_expression=not feature_selection_used,
         n_jobs=args.n_jobs,
         max_iter=args.max_iter,
+        use_GPU=args.use_gpu,
     )
     model.write(args.output_model)
 
@@ -139,6 +151,7 @@ def main():
         "feature_selection_top_genes": args.feature_selection_top_genes if feature_selection_used else None,
         "feature_selection_max_iter": args.feature_selection_max_iter if feature_selection_used else None,
         "final_training_max_iter": args.max_iter,
+        "use_gpu": args.use_gpu,
         "balance_cells_per_label": args.balance_cells_per_label if args.training_mode == "detailed" else None,
         "genes": selected_genes,
     }
